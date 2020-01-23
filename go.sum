@@ -1,0 +1,4 @@
+github.com/akfaew/test v0.0.0-20191210122307-b1050b7721f5 h1:luiudSiYVMN1Y7wEoVXtI076/13nV/AarEwKIWcltQQ=
+github.com/akfaew/test v0.0.0-20191210122307-b1050b7721f5/go.mod h1:W0czkPcrCL2YBWuhEeI0uHDVMkKXWubVnVDnI701JN8=
+github.com/streadway/amqp v0.0.0-20200108173154-1c71cc93ed71 h1:2MR0pKUzlP3SGgj5NYJe/zRYDwOu9ku6YHy+Iw7l5DM=
+github.com/streadway/amqp v0.0.0-20200108173154-1c71cc93ed71/go.mod h1:AZpEONHx3DKn8O/DFsRAY58/XVQiIPMTMB1SddzLXVw=
