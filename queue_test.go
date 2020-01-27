@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akfaew/test"
 	"github.com/streadway/amqp"
+	"github.com/stretchr/testify/assert"
 )
 
 var (
@@ -29,30 +29,30 @@ func TestQueueSingle(t *testing.T) {
 	// Consumer
 	jobChannel := make(chan amqp.Delivery)
 	qi, err := NewQueue(rabbitUrl, t.Name(), 1, true, false, jobChannel)
-	test.NoError(t, err)
+	assert.NoError(t, err)
 	defer qi.Close()
 
 	rec := func(m amqp.Delivery) *amqp.Publishing {
-		test.NoError(t, m.Ack(false))
-		test.EqualStr(t, m.CorrelationId, correlationId)
+		assert.NoError(t, m.Ack(false))
+		assert.Equal(t, m.CorrelationId, correlationId)
 		received <- true
 		return nil
 	}
-	test.NoError(t, qi.AddReceiver(rec))
+	assert.NoError(t, qi.AddReceiver(rec))
 
 	t.Run("Non-AMQP URL", func(t *testing.T) {
 		_, err := NewQueue("invalid_url", t.Name(), 1, false, false, jobChannel)
-		test.EqualStr(t, err.Error(), "AMQP scheme must be either 'amqp://' or 'amqps://'")
+		assert.EqualError(t, err, "AMQP scheme must be either 'amqp://' or 'amqps://'")
 	})
 
 	t.Run("Non-Existent URL", func(t *testing.T) {
 		_, err := NewQueue("amqp://blah", t.Name(), 1, false, false, jobChannel)
-		test.EqualStr(t, err.Error(), "dial tcp: lookup blah: no such host")
+		assert.Contains(t, err.Error(), "no such host")
 	})
 
 	jobChannel2 := make(chan amqp.Delivery)
 	qo, err := NewQueue(rabbitUrl, t.Name(), 1, false, false, jobChannel2)
-	test.NoError(t, err)
+	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
 		return &amqp.Publishing{
@@ -62,7 +62,7 @@ func TestQueueSingle(t *testing.T) {
 			Headers:       d.Headers,
 		}
 	}
-	test.NoError(t, qo.AddPublisher(context.TODO(), pub))
+	assert.NoError(t, qo.AddPublisher(context.TODO(), pub))
 
 	t.Run("Send", func(t *testing.T) {
 		jobChannel2 <- amqp.Delivery{CorrelationId: correlationId}
@@ -87,19 +87,19 @@ func TestQueueReconnect(t *testing.T) {
 	// Consumer
 	jobChannel := make(chan amqp.Delivery)
 	qi, err := NewQueue(rabbitUrl, t.Name(), 1, true, false, jobChannel)
-	test.NoError(t, err)
+	assert.NoError(t, err)
 	defer qi.Close()
 
 	rec := func(m amqp.Delivery) *amqp.Publishing {
-		test.NoError(t, m.Ack(false))
+		assert.NoError(t, m.Ack(false))
 		received <- true
 		return nil
 	}
-	test.NoError(t, qi.AddReceiver(rec))
+	assert.NoError(t, qi.AddReceiver(rec))
 
 	jobChannel2 := make(chan amqp.Delivery)
 	qo, err := NewQueue(rabbitUrl, t.Name(), 1, false, false, jobChannel2)
-	test.NoError(t, err)
+	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
 		return &amqp.Publishing{
@@ -109,7 +109,7 @@ func TestQueueReconnect(t *testing.T) {
 			Headers:       d.Headers,
 		}
 	}
-	test.NoError(t, qo.AddPublisher(context.TODO(), pub))
+	assert.NoError(t, qo.AddPublisher(context.TODO(), pub))
 
 	t.Run("Reconnect", func(t *testing.T) {
 		var wg sync.WaitGroup
@@ -119,7 +119,7 @@ func TestQueueReconnect(t *testing.T) {
 
 			time.Sleep(time.Millisecond * 200)
 			cmd := exec.Command("docker", "restart", "test-rabbitmq")
-			test.NoError(t, cmd.Run())
+			assert.NoError(t, cmd.Run())
 		}()
 
 		go func() {
@@ -145,20 +145,20 @@ func TestQueueFast(t *testing.T) {
 
 	// Consumer
 	qi, err := NewQueue(rabbitUrl, t.Name(), 1, true, false, nil)
-	test.NoError(t, err)
+	assert.NoError(t, err)
 	defer qi.Close()
 
 	rec := func(m amqp.Delivery) *amqp.Publishing {
-		test.NoError(t, m.Ack(false))
+		assert.NoError(t, m.Ack(false))
 		received <- true
 		return nil
 	}
-	test.NoError(t, qi.AddReceiver(rec))
+	assert.NoError(t, qi.AddReceiver(rec))
 
 	// Publisher
 	jobOutChannel := make(chan amqp.Delivery)
 	qo, err := NewQueue(rabbitUrl, t.Name(), 1, false, false, jobOutChannel)
-	test.NoError(t, err)
+	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
 		return &amqp.Publishing{
@@ -168,7 +168,7 @@ func TestQueueFast(t *testing.T) {
 			Headers:       d.Headers,
 		}
 	}
-	test.NoError(t, qo.AddPublisher(context.TODO(), pub))
+	assert.NoError(t, qo.AddPublisher(context.TODO(), pub))
 
 	t.Run("Multiple", func(t *testing.T) {
 		var wg sync.WaitGroup
@@ -197,7 +197,7 @@ func CheckNumMessages(t *testing.T, queueName string, want int) {
 	// messages. Use rabbitmqctl, it's slow (0.6s) but bearable.
 	cmd := exec.Command("docker", "exec", "-i", "test-rabbitmq", "rabbitmqctl", "list_queues")
 	out, err := cmd.CombinedOutput()
-	test.NoError(t, err)
+	assert.NoError(t, err)
 
 	// Sample output:
 	//   Timeout: 60.0 seconds ...
@@ -208,10 +208,10 @@ func CheckNumMessages(t *testing.T, queueName string, want int) {
 		if strings.HasPrefix(line, queueName+"\t") {
 			// sample value: "TestQueueX      210"
 			vals := strings.Split(line, "\t")
-			test.Len(t, vals, 2)
+			assert.Len(t, vals, 2)
 			val, err := strconv.Atoi(vals[1])
-			test.NoError(t, err)
-			test.EqualInt(t, val, want)
+			assert.NoError(t, err)
+			assert.Equal(t, val, want)
 		}
 	}
 }
