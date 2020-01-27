@@ -14,6 +14,7 @@ import (
 
 	"github.com/akfaew/test"
 	"github.com/streadway/amqp"
+	"github.com/stretchr/testify/assert"
 )
 
 var (
@@ -47,7 +48,7 @@ func TestQueueSingle(t *testing.T) {
 
 	t.Run("Non-Existent URL", func(t *testing.T) {
 		_, err := NewQueue("amqp://blah", t.Name(), 1, false, false, jobChannel)
-		test.EqualStr(t, err.Error(), "dial tcp: lookup blah: no such host")
+		assert.Contains(t, err.Error(), "no such host")
 	})
 
 	jobChannel2 := make(chan amqp.Delivery)
