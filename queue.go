@@ -184,9 +184,9 @@ func (q *Queue) reconnector(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case err := <-q.connectionErr:
-			if !q.closed && err != nil {
-				q.log("Connection on queue %s closed with error %s. Reconnecting.", q.name, err)
+		case amqpError := <-q.connectionErr:
+			if !q.closed && amqpError != nil {
+				q.log("Connection on queue %s closed with error %+v. Reconnecting.", q.name, amqpError)
 				q.connect()
 				q.reconnectWorkers(ctx)
 			}
