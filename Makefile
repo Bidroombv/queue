@@ -1,4 +1,5 @@
-TEST_ARGS = -failfast -tags rabbitmq
+TAGS = rabbitmq
+TEST_ARGS = -failfast -tags $(TAGS)
 RABBITMQ_CONTAINER = test-rabbitmq
 
 .PHONY: fmt
@@ -7,7 +8,7 @@ fmt:
 
 .PHONY: lint
 lint:
-	golangci-lint run
+	golangci-lint run --build-tags $(TAGS)
 
 .PHONY: test-start
 test-start:

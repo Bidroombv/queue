@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -11,6 +12,9 @@ import (
 )
 
 var (
+	ErrConfirmFailed = fmt.Errorf("Confirm failed")
+	ErrAckNackFailed = fmt.Errorf("Ack failed")
+
 	consumerWid  uint64 = 0
 	publisherWid uint64 = 0
 )
@@ -187,7 +191,9 @@ func (q *Queue) reconnector(ctx context.Context) {
 		case amqpError := <-q.connectionErr:
 			if !q.closed && amqpError != nil {
 				q.log("Connection on queue %s closed with error %+v. Reconnecting.", q.name, amqpError)
-				q.connect()
+				if err := q.connect(); err != nil {
+					q.log("Connect() on queue %s failed with error: %s", q.name, err)
+				}
 				q.reconnectWorkers(ctx)
 			}
 		}
@@ -209,7 +215,10 @@ func (q *Queue) reconnectWorkers(ctx context.Context) {
 		var worker = q.workers[i]
 		q.logVerbose("Recovering worker: %d on queue: %s\n", worker.id, q.name)
 		if q.isConsumer {
-			q.receiver(&worker)
+			if err := q.receiver(&worker); err != nil {
+				q.log("receiver() for worker/queue %d/%s failed with error: %s\n",
+					worker.id, q.name, err)
+			}
 		} else {
 			go q.sender(ctx, &worker)
 		}
@@ -280,15 +289,45 @@ MAIN:
 
 			publishing := w.work(*m)
 
+			// There are multiple possible failure scenarios that
+			// result in either message Duplication or Loss.
 			if err := q.publish(publishing, w.channel); err != nil {
+				// Destination RabbitMQ didn't accept our message
 				q.log("Failed to publish message with CorrelationId %s. Error: %s",
 					m.CorrelationId, err)
-				m.Nack(false, false)
+				if err := m.Nack(false, false); err != nil {
+					// Source RabbitMQ didn't receive our Nack
+					//
+					// If it crashed the message will be lost
+					// If it's lagging the message will be retried
+					q.log("sender Nack() of %s Failed with %s\n", m.CorrelationId, err)
+				}
 
+				// Reconnect
 				continue MAIN
 			}
 
-			q.checkConfirmation(*m, w)
+			confirmed := q.checkConfirmation(*m, w)
+			if !confirmed {
+				// Destination RabbitMQ didn't confirm our
+				// message, but it accepted it earlier.
+				q.log("Failed to get confirmation of %s\n",
+					m.CorrelationId)
+
+				// XXX reconnect, but only if no Ack received (as opposed to negative ack)?
+			}
+
+			if err := q.ackNack(*m, confirmed); err != nil {
+				// Source RabbitMQ is unreachable
+				//
+				// If confirmed == false:
+				//   If Source RabbitMQ crashed the message will be dropped
+				//   If it's just lagging the message will be re-delivered
+				// If confirmed == true:
+				//   If Source RabbitMQ crashed it's OK
+				//   If it's just lagging the message will be duplicated
+				q.log("Failed to Ack/Nack %s, error: %s\n", m.CorrelationId, err)
+			}
 
 			q.logVerbose("Worker %d finished job with CorrelationId: %s\n", w.id, m.CorrelationId)
 		}
@@ -300,14 +339,30 @@ MAIN:
 	w.channel.Close()
 }
 
-func (q *Queue) checkConfirmation(m amqp.Delivery, w *worker) {
-	if confirmed := <-w.confirms; confirmed.Ack {
-		m.Ack(false)
-		q.logVerbose("Message CONFIRMED on publishing: %+v\n", m)
+// https://www.rabbitmq.com/confirms.html#publisher-confirms:
+//     basic.nack will only be delivered if an internal error occurs in the
+//     Erlang process responsible for a queue.
+//
+// We're observing this when the server is restarted
+//
+// XXX what does the amqp library do when the server disappears without a trace?
+func (q *Queue) checkConfirmation(m amqp.Delivery, w *worker) bool {
+	confirmed := <-w.confirms
+	return confirmed.Ack
+}
+
+func (q *Queue) ackNack(m amqp.Delivery, confirmed bool) error {
+	if confirmed {
+		if err := m.Ack(false); err != nil {
+			return err
+		}
 	} else {
-		m.Nack(false, false)
-		q.log("Failed to CONFIRM publishing: %+v\n", m)
+		if err := m.Nack(false, false); err != nil {
+			return err
+		}
 	}
+
+	return nil
 }
 
 // AddReceiver start consuming messages on channel ch from the queue and

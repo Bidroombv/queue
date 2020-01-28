@@ -3,6 +3,7 @@ module github.com/Bidroombv/queue
 go 1.13
 
 require (
+	github.com/akfaew/test v0.0.0-20191210122307-b1050b7721f5
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/kr/pretty v0.2.0 // indirect
 	github.com/streadway/amqp v0.0.0-20200108173154-1c71cc93ed71

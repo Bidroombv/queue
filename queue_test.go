@@ -9,9 +9,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/akfaew/test"
 	"github.com/streadway/amqp"
 	"github.com/stretchr/testify/assert"
 )
@@ -73,32 +75,41 @@ func TestQueueSingle(t *testing.T) {
 	CheckNumMessages(t, t.Name(), 0)
 }
 
-// This test will send multiple messages, each with a 100ms delay, and restart
+// This test will send many messages, each with a short delay, and restart
 // the rabbitmq server sometime in the middle of that.
 //
-// It should run for just under 10 seconds.
+// It should finish in a bit over 10 seconds.
 //
-// Don't run it in parallel, as it restarts the docker container that other
+// Don't run it in parallel as it restarts the docker container that other
 // tests rely on.
 func TestQueueReconnect(t *testing.T) {
-	num := 30
-	received := make(chan bool) // this channel gets "released" on success
+	num := 10000                  // Number of messages to send
+	delay := time.Millisecond * 1 // Delay between each message
+
+	// We use these to see if the test succeeded
+	var noReceived uint64
+	var noSent uint64
+	var noAck uint64
+	var noNack uint64
+	var noReject uint64
 
 	// Consumer
-	jobChannel := make(chan amqp.Delivery)
+	jobChannel := make(chan amqp.Delivery, num)
 	qi, err := NewQueue(rabbitUrl, t.Name(), 1, true, false, jobChannel)
+	// qi.Log = debugLog
 	assert.NoError(t, err)
 	defer qi.Close()
 
 	rec := func(m amqp.Delivery) *amqp.Publishing {
 		assert.NoError(t, m.Ack(false))
-		received <- true
+		atomic.AddUint64(&noReceived, 1)
 		return nil
 	}
 	assert.NoError(t, qi.AddReceiver(rec))
 
-	jobChannel2 := make(chan amqp.Delivery)
+	jobChannel2 := make(chan amqp.Delivery, num)
 	qo, err := NewQueue(rabbitUrl, t.Name(), 1, false, false, jobChannel2)
+	// qo.Log = debugLog
 	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
@@ -114,25 +125,62 @@ func TestQueueReconnect(t *testing.T) {
 	t.Run("Reconnect", func(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(2)
+
+		// Container restarter
 		go func() {
 			defer wg.Done()
 
 			time.Sleep(time.Millisecond * 200)
+			t.Logf("Restarting docker container")
 			cmd := exec.Command("docker", "restart", "test-rabbitmq")
 			assert.NoError(t, cmd.Run())
 		}()
 
+		// Sender
 		go func() {
 			defer wg.Done()
 			for i := 0; i < num; i++ {
-				jobChannel2 <- amqp.Delivery{CorrelationId: fmt.Sprintf("%d", i)}
+				acknowledger := NewAcknowledger(
+					func(tag uint64, multiple bool) error {
+						atomic.AddUint64(&noAck, 1)
+						return nil
+					},
+					func(tag uint64, multiple bool, requeue bool) error {
+						atomic.AddUint64(&noNack, 1)
+						return nil
+					},
+					func(tag uint64, requeue bool) error {
+						atomic.AddUint64(&noReject, 1)
+						return nil
+					},
+					false,
+				)
 
-				<-received
-				t.Logf("Received message %d", i)
-				time.Sleep(time.Millisecond * 100)
+				jobChannel2 <- amqp.Delivery{
+					CorrelationId: fmt.Sprintf("%d", i),
+					Acknowledger:  acknowledger,
+				}
+				atomic.AddUint64(&noSent, 1)
+
+				// debugLog.Printf("Sent message %d\n", i)
+				time.Sleep(delay)
 			}
 		}()
 		wg.Wait()
+		time.Sleep(time.Millisecond * 200) // process the last message
+
+		// By now we have sent `num` messages. Either one or zero of
+		// them have been rejected because of the restart
+		t.Logf("noReceived: %d\n", noReceived)
+		t.Logf("noSent: %d\n", noSent)
+		t.Logf("noAck: %d\n", noAck)
+		t.Logf("noNack: %d\n", noNack)
+		t.Logf("noReject: %d\n", noReject)
+		test.EqualInt(t, int(noReceived), int(noAck))
+		test.EqualInt(t, int(noAck+noNack+noReject), num)
+		if noNack > 1 {
+			t.Fatalf("More than one message Nacked, expected 0 or 1")
+		}
 	})
 
 	CheckNumMessages(t, t.Name(), 0)
