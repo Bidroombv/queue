@@ -121,8 +121,7 @@ func (q *Queue) Close() {
 	q.logVerbose("Closing connection to %s", q.name)
 	q.closed = true
 
-	for i := range q.workers {
-		var w = q.workers[i]
+	for _, w := range q.workers {
 		w.stop()
 	}
 	q.workers = nil
