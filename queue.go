@@ -463,11 +463,7 @@ func (q *Queue) publish(message *amqp.Publishing, ch *amqp.Channel) error {
 	}
 
 	if ch == nil {
-		var err error
-		ch, err = q.getChannel()
-		if err != nil {
-			return err
-		}
+		return errors.New("Channel cannot be nil")
 	}
 	// Publish the response
 	puberr := ch.Publish(
