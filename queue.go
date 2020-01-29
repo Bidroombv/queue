@@ -172,9 +172,12 @@ func (q *Queue) connect() error {
 	}
 
 	if q.isConsumer {
-		if err := q.setConsumerQoS(q.prefetchSize, true); err != nil {
-			q.log("setConsumerQoS() error: %s", err)
-			// XXX error not really handled
+		if err := q.channel.Qos(
+			q.prefetchSize, // prefetch count
+			0,              // prefetch size
+			true,           // global
+		); err != nil {
+			return err
 		}
 	}
 
@@ -440,18 +443,6 @@ func (q *Queue) setupQueue() error {
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// setConsumerQoS sets QoS on a channel with a prefetch value
-func (q *Queue) setConsumerQoS(prefetch int, global bool) error {
-	if q.channel != nil && q.name != "" {
-		return q.channel.Qos(
-			prefetch, // prefetch count
-			0,        // prefetch size
-			global,   // global
-		)
 	}
 	return nil
 }
