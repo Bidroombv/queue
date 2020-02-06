@@ -22,6 +22,52 @@ var (
 	rabbitUrl = "amqp://guest:guest@localhost:35672/"
 )
 
+// Test graceful stop
+func TestQueueStop(t *testing.T) {
+	t.Run("Close Consumer", func(t *testing.T) {
+		testLog.Reset()
+		jobChannel := make(chan amqp.Delivery)
+		q, err := NewQueue(rabbitUrl, t.Name(), 1, true, false, jobChannel)
+		q.Log = testLogger
+		assert.NoError(t, err)
+
+		rec := func(m amqp.Delivery) *amqp.Publishing {
+			return nil
+		}
+		assert.NoError(t, q.AddReceiver(rec))
+		time.Sleep(time.Millisecond * 50)
+		assert.NoError(t, q.AddReceiver(rec))
+		time.Sleep(time.Millisecond * 50)
+		assert.NoError(t, q.AddReceiver(rec))
+		time.Sleep(time.Millisecond * 50)
+
+		q.Close()
+		time.Sleep(time.Millisecond * 50)
+		testLog.Fixture(t)
+	})
+
+	t.Run("Close Publisher", func(t *testing.T) {
+		testLog.Reset()
+		jobChannel := make(chan amqp.Delivery)
+		q, err := NewQueue(rabbitUrl, t.Name(), 1, false, false, jobChannel)
+		q.Log = testLogger
+		assert.NoError(t, err)
+		pub := func(d amqp.Delivery) *amqp.Publishing {
+			return nil
+		}
+		assert.NoError(t, q.AddPublisher(context.TODO(), pub))
+		time.Sleep(time.Millisecond * 50)
+		assert.NoError(t, q.AddPublisher(context.TODO(), pub))
+		time.Sleep(time.Millisecond * 50)
+		assert.NoError(t, q.AddPublisher(context.TODO(), pub))
+		time.Sleep(time.Millisecond * 50)
+
+		q.Close()
+		time.Sleep(time.Millisecond * 50)
+		testLog.Fixture(t)
+	})
+}
+
 // This function will do some resiliency testing (invalid URL), and deliver a
 // single message.
 func TestQueueSingle(t *testing.T) {
@@ -96,7 +142,6 @@ func TestQueueReconnect(t *testing.T) {
 	// Consumer
 	jobChannel := make(chan amqp.Delivery, num)
 	qi, err := NewQueue(rabbitUrl, t.Name(), 1, true, false, jobChannel)
-	// qi.Log = debugLog
 	assert.NoError(t, err)
 	defer qi.Close()
 
@@ -109,7 +154,6 @@ func TestQueueReconnect(t *testing.T) {
 
 	jobChannel2 := make(chan amqp.Delivery, num)
 	qo, err := NewQueue(rabbitUrl, t.Name(), 1, false, false, jobChannel2)
-	// qo.Log = debugLog
 	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
@@ -162,7 +206,6 @@ func TestQueueReconnect(t *testing.T) {
 				}
 				atomic.AddUint64(&noSent, 1)
 
-				// debugLog.Printf("Sent message %d\n", i)
 				time.Sleep(delay)
 			}
 		}()
