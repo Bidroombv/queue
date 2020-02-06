@@ -16,5 +16,5 @@ jobs:
           github_token: ${{ secrets.github_token }}
           tool_name: "golangci-lint"
           level: warning
-          golangci_lint_flags: "./..."
+          golangci_lint_flags: "--build-tags rabbitmq ./..."
           reporter: "github-pr-check"
