@@ -427,8 +427,8 @@ func (q *Queue) setupQueue() error {
 		return err
 	}
 
-	if q.channel != nil && q.name != "" {
-		// TODO make queue durability configurable
+	// XXX why must q.name be non-empty? Is this proper behavior if it is empty?
+	if q.name != "" {
 		if _, err := q.channel.QueueDeclare(
 			q.name,    // name
 			q.durable, // durable
