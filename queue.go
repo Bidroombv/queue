@@ -74,8 +74,6 @@ type Queue struct {
 
 	// ConnectionErr receives errors from the Connection in case of disconnection
 	connectionErr chan *amqp.Error
-	// closed signal a purposeful close of the queue
-	closed bool
 	// consumer specifies if this queue is for consuming messages or for publishing
 	isConsumer bool
 	// whether or not the AMQP queue is durable
@@ -119,7 +117,6 @@ func NewQueue(url string, name string, prefetchSize int, isConsumer, durable boo
 // Close closes queue channels and connections
 func (q *Queue) Close() {
 	q.logVerbose("Closing connection to %s", q.name)
-	q.closed = true
 
 	for _, w := range q.workers {
 		w.stop()
@@ -159,7 +156,7 @@ func (q *Queue) connect() error {
 
 	q.connection = conn
 
-	// this channel will be closed when Queue Channel is closed
+	// "On normal shutdowns, the chan will be closed."
 	q.connectionErr = q.connection.NotifyClose(make(chan *amqp.Error))
 
 	q.logVerbose("Connection established on queue: %s", q.name)
@@ -188,7 +185,8 @@ func (q *Queue) reconnector(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case amqpError := <-q.connectionErr:
-			if !q.closed && amqpError != nil {
+			// nil means that we're shutting down gracefully
+			if amqpError != nil {
 				q.log("Connection on queue %s closed with error %+v. Reconnecting.", q.name, amqpError)
 				if err := q.connect(); err != nil {
 					q.log("Connect() on queue %s failed with error: %s", q.name, err)
