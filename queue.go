@@ -368,7 +368,7 @@ func (q *Queue) ackNack(m amqp.Delivery, confirmed bool) error {
 // posts deliveries to the WorkerFunc
 func (q *Queue) AddReceiver(cf WorkerFunc) error {
 	if !q.isConsumer {
-		return errors.New("Adding a Consumer on a publishing Queue")
+		panic("Adding a Consumer on a publishing Queue")
 	}
 
 	newConsumerWid := atomic.AddUint64(&consumerWid, 1)
@@ -391,7 +391,7 @@ func (q *Queue) AddReceiver(cf WorkerFunc) error {
 // AddPublisher adds a publisher to the worker pool
 func (q *Queue) AddPublisher(ctx context.Context, pf WorkerFunc) error {
 	if q.isConsumer {
-		return errors.New("Adding a Publisher on a consumer Queue")
+		panic("Adding a Publisher on a consumer Queue")
 	}
 
 	newPublisherWid := atomic.AddUint64(&publisherWid, 1)
