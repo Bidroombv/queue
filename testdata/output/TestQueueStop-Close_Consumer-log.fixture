@@ -1,0 +1,10 @@
+test Starting Consumer worker with id: 1
+test START Listening on queue: TestQueueStop/Close_Consumer
+test Starting Consumer worker with id: 2
+test START Listening on queue: TestQueueStop/Close_Consumer
+test Starting Consumer worker with id: 3
+test START Listening on queue: TestQueueStop/Close_Consumer
+test Closing connection to TestQueueStop/Close_Consumer
+test STOP Listening on queue: TestQueueStop/Close_Consumer
+test STOP Listening on queue: TestQueueStop/Close_Consumer
+test STOP Listening on queue: TestQueueStop/Close_Consumer
