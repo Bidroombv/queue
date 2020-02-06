@@ -36,7 +36,7 @@ func TestQueueSingle(t *testing.T) {
 
 	rec := func(m amqp.Delivery) *amqp.Publishing {
 		assert.NoError(t, m.Ack(false))
-		assert.Equal(t, m.CorrelationId, correlationId)
+		assert.Equal(t, correlationId, m.CorrelationId)
 		received <- true
 		return nil
 	}
@@ -259,7 +259,7 @@ func CheckNumMessages(t *testing.T, queueName string, want int) {
 			assert.Len(t, vals, 2)
 			val, err := strconv.Atoi(vals[1])
 			assert.NoError(t, err)
-			assert.Equal(t, val, want)
+			assert.Equal(t, want, val)
 		}
 	}
 }
