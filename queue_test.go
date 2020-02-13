@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akfaew/test"
 	"github.com/streadway/amqp"
 	"github.com/stretchr/testify/assert"
 )
@@ -219,8 +218,8 @@ func TestQueueReconnect(t *testing.T) {
 		t.Logf("noAck: %d\n", noAck)
 		t.Logf("noNack: %d\n", noNack)
 		t.Logf("noReject: %d\n", noReject)
-		test.EqualInt(t, int(noReceived), int(noAck))
-		test.EqualInt(t, int(noAck+noNack+noReject), num)
+		assert.Equal(t, int(noAck), int(noReceived))
+		assert.Equal(t, num, int(noAck+noNack+noReject))
 		if noNack > 1 {
 			t.Fatalf("More than one message Nacked, expected 0 or 1")
 		}
