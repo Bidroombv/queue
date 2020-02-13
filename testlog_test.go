@@ -3,7 +3,7 @@ package queue
 import (
 	"log"
 
-	"github.com/akfaew/test"
+	"github.com/Bidroombv/utils/test"
 )
 
 type Logger struct {
