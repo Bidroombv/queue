@@ -42,8 +42,7 @@ func (w *worker) setupChannel(q *Queue) error {
 
 	ch, err := q.getChannel()
 	if err != nil {
-		q.log("Failed to get channel for publisher on %s. Error: %s\n", q.name, err)
-		return err
+		return fmt.Errorf("Failed to get channel for publisher on %s. Error: %s", q.name, err)
 	}
 	w.channel = ch
 
