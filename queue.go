@@ -419,14 +419,22 @@ func (q *Queue) getChannel() (ch *amqp.Channel, err error) {
 }
 
 const dead string = "deadletter"
+const dumpKey string = "dump.topic"
+const dlx string = "deadletter.exchange"
+
+// MarkDump mark a message Delivery for dumping
+func MarkDump(m *amqp.Delivery) {
+	m.RoutingKey = dumpKey
+}
 
 // SetupDump set a route and queue for dumping unmanaged messages
-// usage:
+// dumpName is the name of the dump queue.
+// To dump a message call MarkDump(message) and then Reject
 func (q *Queue) SetupDump(dumpName string) error {
 	if _, err := q.channel.QueueDeclare(dumpName, true, false, false, false, nil); err != nil {
 		return err
 	}
-	if err := q.channel.QueueBind(dumpName, dumpName, dead, false, nil); err != nil {
+	if err := q.channel.QueueBind(dumpName, dumpKey, dlx, false, nil); err != nil {
 		return err
 	}
 
@@ -435,13 +443,14 @@ func (q *Queue) SetupDump(dumpName string) error {
 
 // setupQueue declares a Queue named queueName
 func (q *Queue) setupQueue() error {
-	if err := q.channel.ExchangeDeclare(dead, "fanout", true, false, false, false, nil); err != nil {
+
+	if err := q.channel.ExchangeDeclare(dlx, "topic", true, false, false, false, nil); err != nil {
 		return err
 	}
 	if _, err := q.channel.QueueDeclare(dead, true, false, false, false, nil); err != nil {
 		return err
 	}
-	if err := q.channel.QueueBind(dead, "*", dead, false, nil); err != nil {
+	if err := q.channel.QueueBind(dead, "*", dlx, false, nil); err != nil {
 		return err
 	}
 
@@ -452,7 +461,7 @@ func (q *Queue) setupQueue() error {
 			false,     // delete when unused
 			false,     // exclusive
 			false,     // no-wait
-			amqp.Table{"x-dead-letter-exchange": dead}, // arguments
+			amqp.Table{"x-dead-letter-exchange": dlx}, // arguments
 		); err != nil {
 			return err
 		}

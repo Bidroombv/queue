@@ -1,9 +1,0 @@
-test Recontestualizing Connector------------------
-test Starting Publisher worker with id: 1
-test Exiting Reconnection goroutine
-test Starting Publisher worker with id: 2
-test Starting Publisher worker with id: 3
-test Closing connection to TestQueueStop/Close_Publisher
-test Stopping Publisher worker with id: 1
-test Stopping Publisher worker with id: 2
-test Stopping Publisher worker with id: 3
