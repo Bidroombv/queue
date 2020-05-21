@@ -2,7 +2,7 @@ package queue
 
 // copied from https://godoc.org/github.com/golang-migrate/migrate#Logger
 
-// Logger is an interface so you can pass in your own
+// LoggerI is an interface so you can pass in your own
 // logging implementation.
 type LoggerI interface {
 	// Printf is like fmt.Printf

@@ -12,7 +12,10 @@ import (
 )
 
 var (
+	// ErrConfirmFailed Error confirm failed
 	ErrConfirmFailed = fmt.Errorf("Confirm failed")
+
+	// ErrAckNackFailed Error ack failed
 	ErrAckNackFailed = fmt.Errorf("Ack failed")
 
 	consumerWid  uint64 = 0
@@ -37,12 +40,12 @@ func (w *worker) setupChannel(q *Queue) error {
 		w.channel.Close() // It is safe to call this method multiple times.
 	}
 
-	if ch, err := q.getChannel(); err != nil {
+	ch, err := q.getChannel()
+	if err != nil {
 		q.log("Failed to get channel for publisher on %s. Error: %s\n", q.name, err)
 		return err
-	} else {
-		w.channel = ch
 	}
+	w.channel = ch
 
 	// this channel is going to be closed when the Queue Channel is closed
 	confirms := make(chan amqp.Confirmation, 1)
@@ -164,11 +167,12 @@ func (q *Queue) connect() error {
 
 	q.logVerbose("Connection established on queue: %s", q.name)
 
-	if ch, err := q.getChannel(); err != nil {
+	ch, err := q.getChannel()
+	if err != nil {
 		return err
-	} else {
-		q.channel = ch
 	}
+
+	q.channel = ch
 
 	if q.isConsumer {
 		if err := q.setConsumerQoS(q.prefetchSize, true); err != nil {
@@ -225,12 +229,13 @@ func (q *Queue) reconnectWorkers(ctx context.Context) {
 }
 
 func (q *Queue) receiver(w *worker) error {
-	if ch, err := q.getChannel(); err != nil {
+	ch, err := q.getChannel()
+	if err != nil {
 		q.log("Failed to get channel for consumer on %s. Error: %s", q.name, err)
 		return err
-	} else {
-		w.channel = ch
 	}
+
+	w.channel = ch
 
 	msgs, err := w.channel.Consume(
 		q.name, // queue
@@ -414,9 +419,23 @@ func (q *Queue) getChannel() (ch *amqp.Channel, err error) {
 	return q.connection.Channel()
 }
 
-// SetupQueue declares a Queue named queueName
+const dead string = "deadletter"
+
+// SetupDump set a route and queue for dumping unmanaged messages
+// usage:
+func (q *Queue) SetupDump(dumpName string) error {
+	if _, err := q.channel.QueueDeclare(dumpName, true, false, false, false, nil); err != nil {
+		return err
+	}
+	if err := q.channel.QueueBind(dumpName, dumpName, dead, false, nil); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// setupQueue declares a Queue named queueName
 func (q *Queue) setupQueue() error {
-	dead := "deadletter"
 	if err := q.channel.ExchangeDeclare(dead, "fanout", true, false, false, false, nil); err != nil {
 		return err
 	}
@@ -428,7 +447,6 @@ func (q *Queue) setupQueue() error {
 	}
 
 	if q.channel != nil && q.name != "" {
-		// TODO make queue durability configurable
 		if _, err := q.channel.QueueDeclare(
 			q.name,    // name
 			q.durable, // durable

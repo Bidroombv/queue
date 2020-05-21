@@ -1,5 +1,6 @@
 package queue
 
+// Acknowledger  interface
 type Acknowledger struct {
 	ack    func(tag uint64, multiple bool) error
 	nack   func(tag uint64, multiple bool, requeue bool) error
@@ -8,6 +9,7 @@ type Acknowledger struct {
 	wait chan bool
 }
 
+// NewAcknowledger construct a new Acknowledger
 func NewAcknowledger(ack func(tag uint64, multiple bool) error, nack func(tag uint64, multiple bool, requeue bool) error, reject func(tag uint64, requeue bool) error, wait bool) *Acknowledger {
 	acker := &Acknowledger{
 		ack:    ack,
@@ -22,12 +24,14 @@ func NewAcknowledger(ack func(tag uint64, multiple bool) error, nack func(tag ui
 	return acker
 }
 
+// Wait action
 func (m *Acknowledger) Wait() {
 	if m.wait != nil {
 		<-m.wait
 	}
 }
 
+// Ack action
 func (m *Acknowledger) Ack(tag uint64, multiple bool) (err error) {
 	err = m.ack(tag, multiple)
 
@@ -37,6 +41,7 @@ func (m *Acknowledger) Ack(tag uint64, multiple bool) (err error) {
 	return
 }
 
+// Nack action
 func (m *Acknowledger) Nack(tag uint64, multiple bool, requeue bool) (err error) {
 	err = m.nack(tag, multiple, requeue)
 
@@ -46,6 +51,7 @@ func (m *Acknowledger) Nack(tag uint64, multiple bool, requeue bool) (err error)
 	return
 }
 
+// Reject action
 func (m *Acknowledger) Reject(tag uint64, requeue bool) (err error) {
 	err = m.reject(tag, requeue)
 
