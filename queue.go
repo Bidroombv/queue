@@ -80,12 +80,13 @@ type Queue struct {
 	closed bool
 	// consumer specifies if this queue is for consuming messages or for publishing
 	isConsumer bool
-	// whether or not the AMQP queue is durable
-	durable bool
+	// Durable sets durability and persistence of the queue
+	Durable bool
 
 	// Jobs is the channel where messages are sent
 	Jobs chan amqp.Delivery
-	Log  LoggerI
+	// Log is the logging interface of this Queue
+	Log LoggerI
 
 	cancelCtx    context.CancelFunc
 	prefetchSize int
@@ -99,7 +100,7 @@ func NewQueue(url string, name string, prefetchSize int, isConsumer, durable boo
 		url:  url,
 
 		isConsumer:   isConsumer,
-		durable:      durable,
+		Durable:      durable,
 		Jobs:         jobs,
 		prefetchSize: prefetchSize,
 		workers:      make([]worker, 0),
@@ -422,25 +423,6 @@ const dead string = "deadletter"
 const dumpKey string = "dump.topic"
 const dlx string = "deadletter.exchange"
 
-// MarkDump mark a message Delivery for dumping
-func MarkDump(m *amqp.Delivery) {
-	m.RoutingKey = dumpKey
-}
-
-// SetupDump set a route and queue for dumping unmanaged messages
-// dumpName is the name of the dump queue.
-// To dump a message call MarkDump(message) and then Reject
-func (q *Queue) SetupDump(dumpName string) error {
-	if _, err := q.channel.QueueDeclare(dumpName, true, false, false, false, nil); err != nil {
-		return err
-	}
-	if err := q.channel.QueueBind(dumpName, dumpKey, dlx, false, nil); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // setupQueue declares a Queue named queueName
 func (q *Queue) setupQueue() error {
 
@@ -457,7 +439,7 @@ func (q *Queue) setupQueue() error {
 	if q.channel != nil && q.name != "" {
 		if _, err := q.channel.QueueDeclare(
 			q.name,    // name
-			q.durable, // durable
+			q.Durable, // durable
 			false,     // delete when unused
 			false,     // exclusive
 			false,     // no-wait
