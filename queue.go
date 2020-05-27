@@ -419,20 +419,19 @@ func (q *Queue) getChannel() (ch *amqp.Channel, err error) {
 	return q.connection.Channel()
 }
 
-const dead string = "deadletter"
-const dumpKey string = "dump.topic"
+const deadSuff string = "deadletter"
 const dlx string = "deadletter.exchange"
 
 // setupQueue declares a Queue named queueName
 func (q *Queue) setupQueue() error {
-
-	if err := q.channel.ExchangeDeclare(dlx, "topic", true, false, false, false, nil); err != nil {
+	deadletter := q.name + "." + deadSuff
+	if err := q.channel.ExchangeDeclare(dlx, "fanout", true, false, false, false, nil); err != nil {
 		return err
 	}
-	if _, err := q.channel.QueueDeclare(dead, true, false, false, false, nil); err != nil {
+	if _, err := q.channel.QueueDeclare(deadletter, true, false, false, false, nil); err != nil {
 		return err
 	}
-	if err := q.channel.QueueBind(dead, "*", dlx, false, nil); err != nil {
+	if err := q.channel.QueueBind(deadletter, "#", dlx, false, nil); err != nil {
 		return err
 	}
 
