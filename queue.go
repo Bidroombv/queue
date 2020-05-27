@@ -443,7 +443,7 @@ func (q *Queue) setupQueue() error {
 			false,     // delete when unused
 			false,     // exclusive
 			false,     // no-wait
-			amqp.Table{"x-dead-letter-exchange": dlx}, // arguments
+			amqp.Table{"x-dead-letter-exchange": exch}, // arguments
 		); err != nil {
 			return err
 		}
