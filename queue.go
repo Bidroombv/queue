@@ -236,9 +236,9 @@ func (q *Queue) receiver(w *worker) error {
 	}
 
 	err = ch.Qos(
-		q.prefetchSize, // prefetch count
-		0,              // prefetch size -- UNUSED
-		true,           // global
+		1,    // prefetch count
+		0,    // prefetch size -- UNUSED
+		true, // global
 	)
 
 	if err != nil {

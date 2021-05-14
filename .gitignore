@@ -4,6 +4,7 @@
 /.container-*
 /.dockerfile-*
 /.history
+/testdata
 .DS_Store
 *.code-workspace
 .vscode
