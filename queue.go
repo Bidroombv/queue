@@ -13,7 +13,7 @@ import (
 
 var (
 	// ErrConfirmFailed Error confirm failed
-	ErrConfirmFailed = fmt.Errorf("Confirm failed")
+	ErrConfirmFailed = fmt.Errorf("confirm failed")
 
 	// ErrAckNackFailed Error ack failed
 	ErrAckNackFailed = fmt.Errorf("Ack failed")
@@ -42,7 +42,7 @@ func (w *worker) setupChannel(q *Queue) error {
 
 	ch, err := q.getChannel()
 	if err != nil {
-		return fmt.Errorf("Failed to get channel for publisher on %s. Error: %s", q.name, err)
+		return fmt.Errorf("failed to get channel for publisher on %s. Error: %s", q.name, err)
 	}
 	w.channel = ch
 
@@ -235,6 +235,16 @@ func (q *Queue) receiver(w *worker) error {
 		return err
 	}
 
+	err = ch.Qos(
+		q.prefetchSize, // prefetch count
+		0,              // prefetch size -- UNUSED
+		true,           // global
+	)
+
+	if err != nil {
+		q.log("Failed to set QoS for consumer on %s. Error: %s", q.name, err)
+		// this is non blocking error
+	}
 	w.channel = ch
 
 	msgs, err := w.channel.Consume(
@@ -466,7 +476,7 @@ func (q *Queue) setConsumerQoS(prefetch int, global bool) error {
 // publish sends a message on a channel if provided, otherwise get a new channel from the queue connection
 func (q *Queue) publish(message *amqp.Publishing, ch *amqp.Channel) error {
 	if q.isConsumer {
-		return errors.New("Publishing on a consumer Queue")
+		return errors.New("publishing on a consumer queue")
 	}
 
 	if ch == nil {
