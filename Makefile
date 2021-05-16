@@ -15,6 +15,9 @@ test-start:
 	# use a non-standard port so that it doesn't collide with the dev
 	# environment
 	docker run -d --name $(RABBITMQ_CONTAINER) \
+	-v "rabbitmq_log:/var/log/rabbitmq" \
+    -v "rabbitmq_data:/var/lib/rabbitmq" \
+	--hostname queue-rabbit \
 		-p 45672:15672 \
 		-p 35672:5672 \
 		--rm \

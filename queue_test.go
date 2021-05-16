@@ -26,7 +26,7 @@ func TestQueueStop(t *testing.T) {
 	t.Run("Close Consumer", func(t *testing.T) {
 		testLog.Reset()
 		jobChannel := make(chan amqp.Delivery)
-		q, err := NewQueue(rabbitUrl, t.Name(), 1, true, false, jobChannel)
+		q, err := NewQueue(rabbitUrl, t.Name(), 3, true, false, jobChannel)
 		q.Log = testLogger
 		assert.NoError(t, err)
 
@@ -128,8 +128,8 @@ func TestQueueSingle(t *testing.T) {
 // Don't run it in parallel as it restarts the docker container that other
 // tests rely on.
 func TestQueueReconnect(t *testing.T) {
-	num := 10000                  // Number of messages to send
-	delay := time.Millisecond * 1 // Delay between each message
+	num := 10000                   // Number of messages to send
+	delay := time.Millisecond * 10 // Delay between each message
 
 	// We use these to see if the test succeeded
 	var noReceived uint64
@@ -140,7 +140,7 @@ func TestQueueReconnect(t *testing.T) {
 
 	// Consumer
 	jobChannel := make(chan amqp.Delivery, num)
-	qi, err := NewQueue(rabbitUrl, t.Name(), 1, true, false, jobChannel)
+	qi, err := NewQueue(rabbitUrl, t.Name(), 1, true, true, jobChannel)
 	assert.NoError(t, err)
 	defer qi.Close()
 
@@ -152,7 +152,7 @@ func TestQueueReconnect(t *testing.T) {
 	assert.NoError(t, qi.AddReceiver(rec))
 
 	jobChannel2 := make(chan amqp.Delivery, num)
-	qo, err := NewQueue(rabbitUrl, t.Name(), 1, false, false, jobChannel2)
+	qo, err := NewQueue(rabbitUrl, t.Name(), 1, false, true, jobChannel2)
 	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
@@ -173,7 +173,7 @@ func TestQueueReconnect(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			time.Sleep(time.Millisecond * 200)
+			time.Sleep(delay * time.Duration(num/2))
 			t.Logf("Restarting docker container")
 			cmd := exec.Command("docker", "restart", "test-rabbitmq")
 			assert.NoError(t, cmd.Run())
@@ -184,18 +184,22 @@ func TestQueueReconnect(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < num; i++ {
 				acknowledger := NewAcknowledger(
+					// ack
 					func(tag uint64, multiple bool) error {
 						atomic.AddUint64(&noAck, 1)
 						return nil
 					},
+					// nack
 					func(tag uint64, multiple bool, requeue bool) error {
 						atomic.AddUint64(&noNack, 1)
 						return nil
 					},
+					// reject
 					func(tag uint64, requeue bool) error {
 						atomic.AddUint64(&noReject, 1)
 						return nil
 					},
+					// wait
 					false,
 				)
 
