@@ -236,9 +236,9 @@ func (q *Queue) receiver(w *worker) error {
 	}
 
 	err = ch.Qos(
-		1,    // prefetch count
-		0,    // prefetch size -- UNUSED
-		true, // global
+		q.prefetchSize, // prefetch count
+		0,              // prefetch size -- UNUSED
+		true,           // global
 	)
 
 	if err != nil {
@@ -390,13 +390,12 @@ func (q *Queue) AddReceiver(cf WorkerFunc) error {
 
 	consumer := &worker{id: newConsumerWid, work: cf}
 
-	// add consumer to the list
-	q.workers = append(q.workers, *consumer)
-
 	if err := q.receiver(consumer); err != nil {
-		q.workers = q.workers[:len(q.workers)-1]
 		return err
 	}
+
+	// add consumer to the list
+	q.workers = append(q.workers, *consumer)
 
 	q.logVerbose("Starting Consumer worker with id: %d", newConsumerWid)
 
