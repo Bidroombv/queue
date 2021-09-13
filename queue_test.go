@@ -22,6 +22,13 @@ import (
 // 	rabbitUrl = "amqp://guest:guest@localhost:35672/"
 // )
 
+func init() {
+	os.Setenv("RABBITMQ_HOSTNAME", "localhost")
+	os.Setenv("RABBITMQ_USERNAME", "guest")
+	os.Setenv("RABBITMQ_PASSWORD", "guest")
+	os.Setenv("RABBITMQ_PORT", "35672")
+}
+
 // Test graceful stop
 func TestQueueStop(t *testing.T) {
 	t.Run("Close Consumer", func(t *testing.T) {
@@ -311,9 +318,7 @@ func CheckNumMessages(t *testing.T, queueName string, want int) {
 }
 
 func Test_setUrl_RabbitMQHostNameNotPresent(t *testing.T) {
-	defer func() {
-		os.Clearenv()
-	}()
+	os.Clearenv()
 	os.Setenv("RABBITMQ_PORT", "0000")
 	os.Setenv("RABBITMQ_USERNAME", "test")
 	os.Setenv("RABBITMQ_PASSWORD", "test")
@@ -322,9 +327,7 @@ func Test_setUrl_RabbitMQHostNameNotPresent(t *testing.T) {
 }
 
 func Test_setUrl_RabbitMQUserNameNotPresent(t *testing.T) {
-	defer func() {
-		os.Clearenv()
-	}()
+	os.Clearenv()
 	os.Setenv("RABBITMQ_HOSTNAME", "testhost")
 	os.Setenv("RABBITMQ_PORT", "0000")
 	os.Setenv("RABBITMQ_PASSWORD", "test")
@@ -333,9 +336,7 @@ func Test_setUrl_RabbitMQUserNameNotPresent(t *testing.T) {
 }
 
 func Test_setUrl_RabbitMQPasswordNotPresent(t *testing.T) {
-	defer func() {
-		os.Clearenv()
-	}()
+	os.Clearenv()
 	os.Setenv("RABBITMQ_HOSTNAME", "testhost")
 	os.Setenv("RABBITMQ_USERNAME", "test")
 	os.Setenv("RABBITMQ_PORT", "0000")
@@ -344,9 +345,7 @@ func Test_setUrl_RabbitMQPasswordNotPresent(t *testing.T) {
 }
 
 func Test_setUrl_RabbitMQPortNotPresent(t *testing.T) {
-	defer func() {
-		os.Clearenv()
-	}()
+	os.Clearenv()
 	os.Setenv("RABBITMQ_HOSTNAME", "testhost")
 	os.Setenv("RABBITMQ_USERNAME", "test")
 	os.Setenv("RABBITMQ_PASSWORD", "test")
@@ -355,9 +354,7 @@ func Test_setUrl_RabbitMQPortNotPresent(t *testing.T) {
 }
 
 func Test_setUrl_RabbitMQSuccess(t *testing.T) {
-	defer func() {
-		os.Clearenv()
-	}()
+	os.Clearenv()
 	expectedUrlString := "amqp://test:test@testhost:0000"
 	os.Setenv("RABBITMQ_HOSTNAME", "testhost")
 	os.Setenv("RABBITMQ_USERNAME", "test")

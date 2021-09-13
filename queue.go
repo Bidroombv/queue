@@ -514,7 +514,6 @@ func (q *Queue) receiveJob(ctx context.Context) *amqp.Delivery {
 }
 
 func (q *Queue) setUrl() {
-	//amqp://admin:admin@queue:5672
 	const urlString = "amqp://%s:%s@%s:%s"
 	hostName := utils.GetEnvVar("RABBITMQ_HOSTNAME", "")
 	port := utils.GetEnvVar("RABBITMQ_PORT", "")
