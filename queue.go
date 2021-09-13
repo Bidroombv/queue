@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Bidroombv/ugo-common/utils"
 	"github.com/streadway/amqp"
 )
 
@@ -94,10 +95,10 @@ type Queue struct {
 }
 
 // NewQueue creates and returns a new Queue structure
-func NewQueue(url string, name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Queue, error) {
+func NewQueue(name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Queue, error) {
 	q := &Queue{
 		name: name,
-		url:  url,
+		//	url:  url,
 
 		isConsumer:   isConsumer,
 		Durable:      durable,
@@ -105,7 +106,7 @@ func NewQueue(url string, name string, prefetchSize int, isConsumer, durable boo
 		prefetchSize: prefetchSize,
 		workers:      make([]worker, 0),
 	}
-
+	q.setUrl()
 	if err := q.connect(); err != nil {
 		return nil, err
 	}
@@ -511,3 +512,29 @@ func (q *Queue) receiveJob(ctx context.Context) *amqp.Delivery {
 		return &job
 	}
 }
+
+func (q *Queue) setUrl() {
+	//amqp://admin:admin@queue:5672
+	const urlString = "amqp://%s:%s@%s:%s"
+	hostName := utils.GetEnvVar("RABBITMQ_HOSTNAME", "")
+	port := utils.GetEnvVar("RABBITMQ_PORT", "")
+	userName := utils.GetEnvVar("RABBITMQ_USERNAME", "")
+	password := utils.GetEnvVar("RABBITMQ_PASSWORD", "")
+	if hostName == "" || port == "" || userName == "" || password == "" {
+		panic("hostname,port,username and password are required for establishing the connection")
+	}
+
+	q.url = fmt.Sprintf(urlString, userName, password, hostName, port)
+}
+
+// type Log struct {
+// 	sync.Mutex
+// 	buf bytes.Buffer
+// }
+
+// func (l *Log) Write(data []byte) (n int, err error) {
+// 	l.Lock()
+// 	defer l.Unlock()
+
+// 	return l.buf.Write(data)
+// }

@@ -1,10 +1,11 @@
-// +build rabbitmq
+// build rabbitmq
 
 package queue
 
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -17,16 +18,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var (
-	rabbitUrl = "amqp://guest:guest@localhost:35672/"
-)
+// var (
+// 	rabbitUrl = "amqp://guest:guest@localhost:35672/"
+// )
 
 // Test graceful stop
 func TestQueueStop(t *testing.T) {
 	t.Run("Close Consumer", func(t *testing.T) {
 		testLog.Reset()
 		jobChannel := make(chan amqp.Delivery)
-		q, err := NewQueue(rabbitUrl, t.Name(), 3, true, false, jobChannel)
+		q, err := NewQueue(t.Name(), 3, true, false, jobChannel)
 		q.Log = testLogger
 		assert.NoError(t, err)
 
@@ -48,7 +49,7 @@ func TestQueueStop(t *testing.T) {
 	t.Run("Close Publisher", func(t *testing.T) {
 		testLog.Reset()
 		jobChannel := make(chan amqp.Delivery)
-		q, err := NewQueue(rabbitUrl, t.Name(), 1, false, false, jobChannel)
+		q, err := NewQueue(t.Name(), 1, false, false, jobChannel)
 		q.Log = testLogger
 		assert.NoError(t, err)
 		pub := func(d amqp.Delivery) *amqp.Publishing {
@@ -75,7 +76,7 @@ func TestQueueSingle(t *testing.T) {
 
 	// Consumer
 	jobChannel := make(chan amqp.Delivery)
-	qi, err := NewQueue(rabbitUrl, t.Name(), 1, true, false, jobChannel)
+	qi, err := NewQueue(t.Name(), 1, true, false, jobChannel)
 	assert.NoError(t, err)
 	defer qi.Close()
 
@@ -88,17 +89,17 @@ func TestQueueSingle(t *testing.T) {
 	assert.NoError(t, qi.AddReceiver(rec))
 
 	t.Run("Non-AMQP URL", func(t *testing.T) {
-		_, err := NewQueue("invalid_url", t.Name(), 1, false, false, jobChannel)
+		_, err := NewQueue(t.Name(), 1, false, false, jobChannel)
 		assert.EqualError(t, err, "AMQP scheme must be either 'amqp://' or 'amqps://'")
 	})
 
 	t.Run("Non-Existent URL", func(t *testing.T) {
-		_, err := NewQueue("amqp://blah", t.Name(), 1, false, false, jobChannel)
+		_, err := NewQueue(t.Name(), 1, false, false, jobChannel)
 		assert.Contains(t, err.Error(), "no such host")
 	})
 
 	jobChannel2 := make(chan amqp.Delivery)
-	qo, err := NewQueue(rabbitUrl, t.Name(), 1, false, false, jobChannel2)
+	qo, err := NewQueue(t.Name(), 1, false, false, jobChannel2)
 	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
@@ -140,7 +141,7 @@ func TestQueueReconnect(t *testing.T) {
 
 	// Consumer
 	jobChannel := make(chan amqp.Delivery, num)
-	qi, err := NewQueue(rabbitUrl, t.Name(), 1, true, true, jobChannel)
+	qi, err := NewQueue(t.Name(), 1, true, true, jobChannel)
 	assert.NoError(t, err)
 	defer qi.Close()
 
@@ -152,7 +153,7 @@ func TestQueueReconnect(t *testing.T) {
 	assert.NoError(t, qi.AddReceiver(rec))
 
 	jobChannel2 := make(chan amqp.Delivery, num)
-	qo, err := NewQueue(rabbitUrl, t.Name(), 1, false, true, jobChannel2)
+	qo, err := NewQueue(t.Name(), 1, false, true, jobChannel2)
 	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
@@ -236,9 +237,8 @@ func TestQueueReconnect(t *testing.T) {
 func TestQueueFast(t *testing.T) {
 	num := 30
 	received := make(chan bool, num) // this channel gets "released" on message delivery
-
 	// Consumer
-	qi, err := NewQueue(rabbitUrl, t.Name(), 1, true, false, nil)
+	qi, err := NewQueue(t.Name(), 1, true, false, nil)
 	assert.NoError(t, err)
 	defer qi.Close()
 
@@ -251,7 +251,7 @@ func TestQueueFast(t *testing.T) {
 
 	// Publisher
 	jobOutChannel := make(chan amqp.Delivery)
-	qo, err := NewQueue(rabbitUrl, t.Name(), 1, false, false, jobOutChannel)
+	qo, err := NewQueue(t.Name(), 1, false, false, jobOutChannel)
 	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
@@ -308,4 +308,62 @@ func CheckNumMessages(t *testing.T, queueName string, want int) {
 			assert.Equal(t, want, val)
 		}
 	}
+}
+
+func Test_setUrl_RabbitMQHostNameNotPresent(t *testing.T) {
+	defer func() {
+		os.Clearenv()
+	}()
+	os.Setenv("RABBITMQ_PORT", "0000")
+	os.Setenv("RABBITMQ_USERNAME", "test")
+	os.Setenv("RABBITMQ_PASSWORD", "test")
+	q := &Queue{}
+	assert.Panics(t, func() { q.setUrl() }, "Execution should panic")
+}
+
+func Test_setUrl_RabbitMQUserNameNotPresent(t *testing.T) {
+	defer func() {
+		os.Clearenv()
+	}()
+	os.Setenv("RABBITMQ_HOSTNAME", "testhost")
+	os.Setenv("RABBITMQ_PORT", "0000")
+	os.Setenv("RABBITMQ_PASSWORD", "test")
+	q := &Queue{}
+	assert.Panics(t, func() { q.setUrl() }, "Execution should panic")
+}
+
+func Test_setUrl_RabbitMQPasswordNotPresent(t *testing.T) {
+	defer func() {
+		os.Clearenv()
+	}()
+	os.Setenv("RABBITMQ_HOSTNAME", "testhost")
+	os.Setenv("RABBITMQ_USERNAME", "test")
+	os.Setenv("RABBITMQ_PORT", "0000")
+	q := &Queue{}
+	assert.Panics(t, func() { q.setUrl() }, "Execution should panic")
+}
+
+func Test_setUrl_RabbitMQPortNotPresent(t *testing.T) {
+	defer func() {
+		os.Clearenv()
+	}()
+	os.Setenv("RABBITMQ_HOSTNAME", "testhost")
+	os.Setenv("RABBITMQ_USERNAME", "test")
+	os.Setenv("RABBITMQ_PASSWORD", "test")
+	q := &Queue{}
+	assert.Panics(t, func() { q.setUrl() }, "Execution should panic")
+}
+
+func Test_setUrl_RabbitMQSuccess(t *testing.T) {
+	defer func() {
+		os.Clearenv()
+	}()
+	expectedUrlString := "amqp://test:test@testhost:0000"
+	os.Setenv("RABBITMQ_HOSTNAME", "testhost")
+	os.Setenv("RABBITMQ_USERNAME", "test")
+	os.Setenv("RABBITMQ_PASSWORD", "test")
+	os.Setenv("RABBITMQ_PORT", "0000")
+	q := &Queue{}
+	q.setUrl()
+	assert.Equal(t, expectedUrlString, q.url, "Expected url does not match the actual url")
 }
