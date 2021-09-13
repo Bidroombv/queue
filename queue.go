@@ -525,15 +525,3 @@ func (q *Queue) setUrl() {
 
 	q.url = fmt.Sprintf(urlString, userName, password, hostName, port)
 }
-
-// type Log struct {
-// 	sync.Mutex
-// 	buf bytes.Buffer
-// }
-
-// func (l *Log) Write(data []byte) (n int, err error) {
-// 	l.Lock()
-// 	defer l.Unlock()
-
-// 	return l.buf.Write(data)
-// }
