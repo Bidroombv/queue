@@ -514,14 +514,15 @@ func (q *Queue) receiveJob(ctx context.Context) *amqp.Delivery {
 }
 
 func (q *Queue) setUrl() {
-	const urlString = "amqp://%s:%s@%s:%s"
+	const urlString = "amqp://%s:%s@%s:%s/%s"
 	hostName := utils.GetEnvVar("RABBITMQ_HOSTNAME", "")
 	port := utils.GetEnvVar("RABBITMQ_PORT", "")
 	userName := utils.GetEnvVar("RABBITMQ_USERNAME", "")
 	password := utils.GetEnvVar("RABBITMQ_PASSWORD", "")
-	if hostName == "" || port == "" || userName == "" || password == "" {
-		panic("hostname,port,username and password are required for establishing the connection")
+	vHost := utils.GetEnvVar("RABBITMQ_VHOST", "")
+	if hostName == "" || port == "" || userName == "" || password == "" || vHost == "" {
+		panic("hostname,port,vhost,username and password are required for establishing the connection")
 	}
 
-	q.url = fmt.Sprintf(urlString, userName, password, hostName, port)
+	q.url = fmt.Sprintf(urlString, userName, password, hostName, port, vHost)
 }
