@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/Bidroombv/ugo-common/utils"
 	"github.com/streadway/amqp"
 )
 
@@ -513,11 +513,11 @@ func (q *Queue) receiveJob(ctx context.Context) *amqp.Delivery {
 
 func (q *Queue) setUrl() {
 	const urlString = "amqp://%s:%s@%s:%s/%s"
-	hostName := utils.GetEnvVar("RABBITMQ_HOSTNAME", "")
-	port := utils.GetEnvVar("RABBITMQ_PORT", "")
-	userName := utils.GetEnvVar("RABBITMQ_USERNAME", "")
-	password := utils.GetEnvVar("RABBITMQ_PASSWORD", "")
-	vHost := utils.GetEnvVar("RABBITMQ_VHOST", "")
+	hostName := os.Getenv("RABBITMQ_HOSTNAME")
+	port := os.Getenv("RABBITMQ_PORT")
+	userName := os.Getenv("RABBITMQ_USERNAME")
+	password := os.Getenv("RABBITMQ_PASSWORD")
+	vHost := os.Getenv("RABBITMQ_VHOST")
 	if hostName == "" || port == "" || userName == "" || password == "" {
 		panic("hostname,port,username and password are required for establishing the connection")
 	}
