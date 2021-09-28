@@ -80,6 +80,8 @@ type Queue struct {
 	closed bool
 	// consumer specifies if this queue is for consuming messages or for publishing
 	isConsumer bool
+	// isExchange specifies if this is queue or an exchange
+	isExchange bool
 	// Durable sets durability and persistence of the queue
 	Durable bool
 
@@ -94,12 +96,13 @@ type Queue struct {
 }
 
 // NewQueue creates and returns a new Queue structure
-func NewQueue(url string, name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Queue, error) {
+func NewQueue(url string, name string, prefetchSize int, isConsumer, isExchange, durable bool, jobs chan amqp.Delivery) (*Queue, error) {
 	q := &Queue{
 		name: name,
 		url:  url,
 
-		isConsumer:   isConsumer,
+		isConsumer: isConsumer,
+		isExchange: isExchange,
 		Durable:      durable,
 		Jobs:         jobs,
 		prefetchSize: prefetchSize,
@@ -428,35 +431,22 @@ func (q *Queue) getChannel() (ch *amqp.Channel, err error) {
 	return q.connection.Channel()
 }
 
-const deadSuff string = "deadletter"
-const dlx string = "dlx"
-
 // setupQueue declares a Queue named queueName
 func (q *Queue) setupQueue() error {
-	deadletter := q.name + "." + deadSuff
-	exch := q.name + "." + dlx
-	if err := q.channel.ExchangeDeclare(exch, "fanout", true, false, false, false, nil); err != nil {
-		return err
-	}
-	if _, err := q.channel.QueueDeclare(deadletter, true, false, false, false, nil); err != nil {
-		return err
-	}
-	if err := q.channel.QueueBind(deadletter, "#", exch, false, nil); err != nil {
-		return err
+	if q.name == "" {
+		return errors.New("no queue or exchange name provided")
 	}
 
-	if q.channel != nil && q.name != "" {
-		if _, err := q.channel.QueueDeclare(
-			q.name,    // name
-			q.Durable, // durable
-			false,     // delete when unused
-			false,     // exclusive
-			false,     // no-wait
-			amqp.Table{"x-dead-letter-exchange": exch}, // arguments
-		); err != nil {
+	if q.isExchange {
+		if err := q.channel.ExchangeDeclarePassive(q.name, "fanout", true, false, false, false, nil); err != nil {
+			return err
+		}
+	} else {
+		if _, err := q.channel.QueueDeclarePassive(q.name, q.Durable, false, false, false, nil); err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -485,10 +475,20 @@ func (q *Queue) publish(message *amqp.Publishing, ch *amqp.Channel) error {
 			return err
 		}
 	}
+
+	// If exchange is used to publish message
+	exchangeName := ""
+	queueName := q.name
+	if q.isExchange {
+		exchangeName = q.name
+		// Since we are using fanout exchange, routing key can be ignored
+		queueName = ""
+	}
+
 	// Publish the response
 	puberr := ch.Publish(
-		"",     // exchange
-		q.name, // routing key
+		exchangeName,     // exchange
+		queueName, // routing key
 		false,  // mandatory
 		false,  // immediate
 		*message)
