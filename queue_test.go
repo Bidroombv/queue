@@ -23,7 +23,7 @@ func init() {
 	os.Setenv("RABBITMQ_USERNAME", "guest")
 	os.Setenv("RABBITMQ_PASSWORD", "guest")
 	os.Setenv("RABBITMQ_PORT", "35672")
-	os.Setenv("RABBITMQ_VHOST", "my_vhost")
+	os.Setenv("RABBITMQ_VHOST", "queue_vhost")
 }
 
 // Test graceful stop
