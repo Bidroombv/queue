@@ -1,5 +1,3 @@
-github.com/Bidroombv/ugo-common/utils v1.2.0 h1:98tzZ2s/HENNV6Ve4NZkxBfDHMCFMIa1fgdEQZw058E=
-github.com/Bidroombv/ugo-common/utils v1.2.0/go.mod h1:SrU7xp/91udvUrY10SlAKTl54kmKxwJOb8gzADmTo3A=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
