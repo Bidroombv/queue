@@ -18,10 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// var (
-// 	rabbitUrl = "amqp://guest:guest@localhost:35672/"
-// )
-
 func init() {
 	os.Setenv("RABBITMQ_HOSTNAME", "localhost")
 	os.Setenv("RABBITMQ_USERNAME", "guest")
@@ -33,10 +29,8 @@ func init() {
 // Test graceful stop
 func TestQueueStop(t *testing.T) {
 	t.Run("Close Consumer", func(t *testing.T) {
-		testLog.Reset()
 		jobChannel := make(chan amqp.Delivery)
 		q, err := NewQueue(t.Name(), 3, true, false, jobChannel)
-		q.Log = testLogger
 		assert.NoError(t, err)
 
 		rec := func(m amqp.Delivery) *amqp.Publishing {
@@ -51,14 +45,11 @@ func TestQueueStop(t *testing.T) {
 
 		q.Close()
 		time.Sleep(time.Millisecond * 50)
-		testLog.Fixture(t)
 	})
 
 	t.Run("Close Publisher", func(t *testing.T) {
-		testLog.Reset()
 		jobChannel := make(chan amqp.Delivery)
 		q, err := NewQueue(t.Name(), 1, false, false, jobChannel)
-		q.Log = testLogger
 		assert.NoError(t, err)
 		pub := func(d amqp.Delivery) *amqp.Publishing {
 			return nil
@@ -72,7 +63,6 @@ func TestQueueStop(t *testing.T) {
 
 		q.Close()
 		time.Sleep(time.Millisecond * 50)
-		testLog.Fixture(t)
 	})
 }
 
@@ -95,16 +85,6 @@ func TestQueueSingle(t *testing.T) {
 		return nil
 	}
 	assert.NoError(t, qi.AddReceiver(rec))
-
-	t.Run("Non-AMQP URL", func(t *testing.T) {
-		_, err := NewQueue(t.Name(), 1, false, false, jobChannel)
-		assert.EqualError(t, err, "AMQP scheme must be either 'amqp://' or 'amqps://'")
-	})
-
-	t.Run("Non-Existent URL", func(t *testing.T) {
-		_, err := NewQueue(t.Name(), 1, false, false, jobChannel)
-		assert.Contains(t, err.Error(), "no such host")
-	})
 
 	jobChannel2 := make(chan amqp.Delivery)
 	qo, err := NewQueue(t.Name(), 1, false, false, jobChannel2)
@@ -354,16 +334,6 @@ func Test_setUrl_RabbitMQPortNotPresent(t *testing.T) {
 	os.Setenv("RABBITMQ_USERNAME", "test")
 	os.Setenv("RABBITMQ_PASSWORD", "test")
 	os.Setenv("RABBITMQ_VHOST", "testvhost")
-	q := &Queue{}
-	assert.Panics(t, func() { q.setUrl() }, "Execution should panic")
-}
-
-func Test_setUrl_RabbitMQVHostNotPresent(t *testing.T) {
-	os.Clearenv()
-	os.Setenv("RABBITMQ_HOSTNAME", "testhost")
-	os.Setenv("RABBITMQ_USERNAME", "test")
-	os.Setenv("RABBITMQ_PASSWORD", "test")
-	os.Setenv("RABBITMQ_PORT", "0000")
 	q := &Queue{}
 	assert.Panics(t, func() { q.setUrl() }, "Execution should panic")
 }

@@ -36,12 +36,6 @@ test: fmt lint
 	fi
 	go test $(TEST_ARGS) ./...
 
-.PHONY: test-regen
-test-regen:
-	rm -rf testdata/output
-	mkdir -p testdata/output
-	go test -regen $(TEST_ARGS) ./...
-
 .PHONY: test-cover
 test-cover: fmt
 	go test $(TEST_ARGS) -coverprofile=coverage.out ./...

@@ -97,9 +97,7 @@ type Queue struct {
 // NewQueue creates and returns a new Queue structure
 func NewQueue(name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Queue, error) {
 	q := &Queue{
-		name: name,
-		//	url:  url,
-
+		name:         name,
 		isConsumer:   isConsumer,
 		Durable:      durable,
 		Jobs:         jobs,
@@ -520,8 +518,8 @@ func (q *Queue) setUrl() {
 	userName := utils.GetEnvVar("RABBITMQ_USERNAME", "")
 	password := utils.GetEnvVar("RABBITMQ_PASSWORD", "")
 	vHost := utils.GetEnvVar("RABBITMQ_VHOST", "")
-	if hostName == "" || port == "" || userName == "" || password == "" || vHost == "" {
-		panic("hostname,port,vhost,username and password are required for establishing the connection")
+	if hostName == "" || port == "" || userName == "" || password == "" {
+		panic("hostname,port,username and password are required for establishing the connection")
 	}
 
 	q.url = fmt.Sprintf(urlString, userName, password, hostName, port, vHost)
