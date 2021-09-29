@@ -122,14 +122,6 @@ func NewQueue(name string, prefetchSize int, isConsumer, durable bool, jobs chan
 		cfg.UserName == "" || cfg.Password == "" {
 		return nil, errors.New("HostName,Port,UserName and Password are required")
 	}
-
-	fmt.Println("test url")
-	fmt.Println("hostname : ", cfg.HostName)
-	fmt.Println("port : ", cfg.Port)
-	fmt.Println("username : ", cfg.UserName)
-	fmt.Println("password : ", cfg.Password)
-
-	fmt.Println("test url")
 	q := &Queue{
 		name:         name,
 		url:          fmt.Sprintf(urlString, cfg.UserName, cfg.Password, cfg.HostName, cfg.Port, cfg.Vhost),
@@ -139,6 +131,7 @@ func NewQueue(name string, prefetchSize int, isConsumer, durable bool, jobs chan
 		prefetchSize: prefetchSize,
 		workers:      make([]worker, 0),
 	}
+
 	if err := q.connect(); err != nil {
 		return nil, err
 	}
