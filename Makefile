@@ -14,7 +14,7 @@ lint:
 test-start:
 	# use a non-standard port so that it doesn't collide with the dev
 	# environment
-	docker run -d --name $(RABBITMQ_CONTAINER) \
+	docker run --env RABBITMQ_DEFAULT_VHOST=queue_vhost -d --name $(RABBITMQ_CONTAINER) \
 	-v "rabbitmq_log:/var/log/rabbitmq" \
     -v "rabbitmq_data:/var/lib/rabbitmq" \
 	--hostname queue-rabbit \
@@ -35,12 +35,6 @@ test: fmt lint
 		echo "================================================"; \
 	fi
 	go test $(TEST_ARGS) ./...
-
-.PHONY: test-regen
-test-regen:
-	rm -rf testdata/output
-	mkdir -p testdata/output
-	go test -regen $(TEST_ARGS) ./...
 
 .PHONY: test-cover
 test-cover: fmt
