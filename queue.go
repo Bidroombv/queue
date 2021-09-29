@@ -23,6 +23,18 @@ var (
 	publisherWid uint64 = 0
 )
 
+const urlString = "amqp://%s:%s@%s:%s/%s"
+
+type config struct {
+	HostName string
+	Port     string
+	UserName string
+	Password string
+	Vhost    string
+}
+
+var cfg *config
+
 // WorkerFunc does all the work necessary on a Delivery message
 type WorkerFunc func(amqp.Delivery) *amqp.Publishing
 
@@ -32,6 +44,16 @@ type worker struct {
 	channel  *amqp.Channel
 	work     WorkerFunc
 	confirms chan amqp.Confirmation
+}
+
+func init() {
+	cfg = &config{
+		HostName: os.Getenv("RABBITMQ_HOSTNAME"),
+		Port:     os.Getenv("RABBITMQ_PORT"),
+		UserName: os.Getenv("RABBITMQ_USERNAME"),
+		Password: os.Getenv("RABBITMQ_PASSWORD"),
+		Vhost:    os.Getenv("RABBITMQ_VHOST"),
+	}
 }
 
 // setupChannel sets up a RabbitMQ Channel for a worker{}. It closes a
@@ -96,15 +118,19 @@ type Queue struct {
 
 // NewQueue creates and returns a new Queue structure
 func NewQueue(name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Queue, error) {
+	if cfg.HostName == "" || cfg.Port == "" ||
+		cfg.UserName == "" || cfg.Password == "" {
+		panic("hostname,port,username and password are required for establishing the connection")
+	}
 	q := &Queue{
 		name:         name,
+		url:          fmt.Sprintf(urlString, cfg.UserName, cfg.Password, cfg.HostName, cfg.Port, cfg.Vhost),
 		isConsumer:   isConsumer,
 		Durable:      durable,
 		Jobs:         jobs,
 		prefetchSize: prefetchSize,
 		workers:      make([]worker, 0),
 	}
-	q.setUrl()
 	if err := q.connect(); err != nil {
 		return nil, err
 	}
@@ -509,18 +535,4 @@ func (q *Queue) receiveJob(ctx context.Context) *amqp.Delivery {
 		}
 		return &job
 	}
-}
-
-func (q *Queue) setUrl() {
-	const urlString = "amqp://%s:%s@%s:%s/%s"
-	hostName := os.Getenv("RABBITMQ_HOSTNAME")
-	port := os.Getenv("RABBITMQ_PORT")
-	userName := os.Getenv("RABBITMQ_USERNAME")
-	password := os.Getenv("RABBITMQ_PASSWORD")
-	vHost := os.Getenv("RABBITMQ_VHOST")
-	if hostName == "" || port == "" || userName == "" || password == "" {
-		panic("hostname,port,username and password are required for establishing the connection")
-	}
-
-	q.url = fmt.Sprintf(urlString, userName, password, hostName, port, vHost)
 }

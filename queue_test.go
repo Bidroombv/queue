@@ -24,6 +24,14 @@ func init() {
 	os.Setenv("RABBITMQ_PASSWORD", "guest")
 	os.Setenv("RABBITMQ_PORT", "35672")
 	os.Setenv("RABBITMQ_VHOST", "queue_vhost")
+
+	cfg = &config{
+		HostName: os.Getenv("RABBITMQ_HOSTNAME"),
+		Port:     os.Getenv("RABBITMQ_PORT"),
+		UserName: os.Getenv("RABBITMQ_USERNAME"),
+		Password: os.Getenv("RABBITMQ_PASSWORD"),
+		Vhost:    os.Getenv("RABBITMQ_VHOST"),
+	}
 }
 
 // Test graceful stop
@@ -296,57 +304,4 @@ func CheckNumMessages(t *testing.T, queueName string, want int) {
 			assert.Equal(t, want, val)
 		}
 	}
-}
-
-func Test_setUrl_RabbitMQHostNameNotPresent(t *testing.T) {
-	os.Clearenv()
-	os.Setenv("RABBITMQ_PORT", "0000")
-	os.Setenv("RABBITMQ_USERNAME", "test")
-	os.Setenv("RABBITMQ_PASSWORD", "test")
-	os.Setenv("RABBITMQ_VHOST", "testvhost")
-	q := &Queue{}
-	assert.Panics(t, func() { q.setUrl() }, "Execution should panic")
-}
-
-func Test_setUrl_RabbitMQUserNameNotPresent(t *testing.T) {
-	os.Clearenv()
-	os.Setenv("RABBITMQ_HOSTNAME", "testhost")
-	os.Setenv("RABBITMQ_PORT", "0000")
-	os.Setenv("RABBITMQ_PASSWORD", "test")
-	os.Setenv("RABBITMQ_VHOST", "testvhost")
-	q := &Queue{}
-	assert.Panics(t, func() { q.setUrl() }, "Execution should panic")
-}
-
-func Test_setUrl_RabbitMQPasswordNotPresent(t *testing.T) {
-	os.Clearenv()
-	os.Setenv("RABBITMQ_HOSTNAME", "testhost")
-	os.Setenv("RABBITMQ_USERNAME", "test")
-	os.Setenv("RABBITMQ_PORT", "0000")
-	os.Setenv("RABBITMQ_VHOST", "testvhost")
-	q := &Queue{}
-	assert.Panics(t, func() { q.setUrl() }, "Execution should panic")
-}
-
-func Test_setUrl_RabbitMQPortNotPresent(t *testing.T) {
-	os.Clearenv()
-	os.Setenv("RABBITMQ_HOSTNAME", "testhost")
-	os.Setenv("RABBITMQ_USERNAME", "test")
-	os.Setenv("RABBITMQ_PASSWORD", "test")
-	os.Setenv("RABBITMQ_VHOST", "testvhost")
-	q := &Queue{}
-	assert.Panics(t, func() { q.setUrl() }, "Execution should panic")
-}
-
-func Test_setUrl_RabbitMQSuccess(t *testing.T) {
-	os.Clearenv()
-	expectedUrlString := "amqp://test:test@testhost:0000/testvhost"
-	os.Setenv("RABBITMQ_HOSTNAME", "testhost")
-	os.Setenv("RABBITMQ_USERNAME", "test")
-	os.Setenv("RABBITMQ_PASSWORD", "test")
-	os.Setenv("RABBITMQ_PORT", "0000")
-	os.Setenv("RABBITMQ_VHOST", "testvhost")
-	q := &Queue{}
-	q.setUrl()
-	assert.Equal(t, expectedUrlString, q.url, "Expected url does not match the actual url")
 }
