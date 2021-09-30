@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var testUrl = &url{}
+var testUrl = &URL{}
 
 // Test graceful stop
 func TestQueueStop(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -24,14 +23,6 @@ var (
 	publisherWid uint64 = 0
 )
 
-type url struct {
-	HostName string `env:"RABBITMQ_HOSTNAME,required=true"`
-	Port     string `env:"RABBITMQ_PORT,required=true"`
-	UserName string `env:"RABBITMQ_USERNAME,required=true"`
-	Password string `env:"RABBITMQ_PASSWORD,required=true"`
-	Vhost    string `env:"RABBITMQ_VHOST,required=true"`
-}
-
 // WorkerFunc does all the work necessary on a Delivery message
 type WorkerFunc func(amqp.Delivery) *amqp.Publishing
 
@@ -41,6 +32,18 @@ type worker struct {
 	channel  *amqp.Channel
 	work     WorkerFunc
 	confirms chan amqp.Confirmation
+}
+
+type URL struct {
+	HostName string `env:"RABBITMQ_HOSTNAME,required=true"`
+	Port     string `env:"RABBITMQ_PORT,required=true"`
+	UserName string `env:"RABBITMQ_USERNAME,required=true"`
+	Password string `env:"RABBITMQ_PASSWORD,required=true"`
+	Vhost    string `env:"RABBITMQ_VHOST,required=true"`
+}
+
+func (url *URL) urlString() string {
+	return fmt.Sprintf("amqp://%s:%s@%s:%s/%s", url.UserName, url.Password, url.HostName, url.Port, url.Vhost)
 }
 
 // setupChannel sets up a RabbitMQ Channel for a worker{}. It closes a
@@ -104,7 +107,7 @@ type Queue struct {
 }
 
 // NewQueue creates and returns a new Queue structure
-func NewQueue(url *url, name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Queue, error) {
+func NewQueue(url *URL, name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Queue, error) {
 	q := &Queue{
 		name:         name,
 		url:          url.urlString(),
@@ -521,19 +524,11 @@ func (q *Queue) receiveJob(ctx context.Context) *amqp.Delivery {
 	}
 }
 
-func ReadCfgFromEnv() (*url, error) {
-	url := &url{}
-	envSet, err := env.EnvironToEnvSet(os.Environ())
-	if err != nil {
+func ReadCfgFromEnv() (*URL, error) {
+	url := &URL{}
+	if _, err := env.UnmarshalFromEnviron(url); err != nil {
 		return nil, err
 	}
-	err = env.Unmarshal(envSet, url)
-	if err != nil {
-		return nil, err
-	}
-	return url, nil
-}
 
-func (url *url) urlString() string {
-	return fmt.Sprintf("amqp://%s:%s@%s:%s/%s", url.UserName, url.Password, url.HostName, url.Port, url.Vhost)
+	return url, nil
 }
