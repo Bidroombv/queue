@@ -290,10 +290,13 @@ func CheckNumMessages(t *testing.T, queueName string, want int) {
 	}
 }
 
-func init() {
+func TestMain(m *testing.M) {
 	os.Setenv("RABBITMQ_HOSTNAME", "localhost")
 	os.Setenv("RABBITMQ_USERNAME", "guest")
 	os.Setenv("RABBITMQ_PASSWORD", "guest")
 	os.Setenv("RABBITMQ_PORT", "35672")
 	os.Setenv("RABBITMQ_VHOST", "queue_vhost")
+	exitVal := m.Run()
+	os.Clearenv()
+	os.Exit(exitVal)
 }
