@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/Netflix/go-env"
 	"github.com/streadway/amqp"
 )
 
@@ -21,19 +23,18 @@ var (
 
 	consumerWid  uint64 = 0
 	publisherWid uint64 = 0
+	once         sync.Once
 )
 
-const urlString = "amqp://%s:%s@%s:%s/%s"
-
 type config struct {
-	HostName string
-	Port     string
-	UserName string
-	Password string
-	Vhost    string
+	HostName string `env:"RABBITMQ_HOSTNAME,required=true"`
+	Port     string `env:"RABBITMQ_PORT,required=true"`
+	UserName string `env:"RABBITMQ_USERNAME,required=true"`
+	Password string `env:"RABBITMQ_PASSWORD,required=true"`
+	Vhost    string `env:"RABBITMQ_VHOST"`
 }
 
-var cfg *config
+var cfg config
 
 // WorkerFunc does all the work necessary on a Delivery message
 type WorkerFunc func(amqp.Delivery) *amqp.Publishing
@@ -44,16 +45,6 @@ type worker struct {
 	channel  *amqp.Channel
 	work     WorkerFunc
 	confirms chan amqp.Confirmation
-}
-
-func init() {
-	cfg = &config{
-		HostName: os.Getenv("RABBITMQ_HOSTNAME"),
-		Port:     os.Getenv("RABBITMQ_PORT"),
-		UserName: os.Getenv("RABBITMQ_USERNAME"),
-		Password: os.Getenv("RABBITMQ_PASSWORD"),
-		Vhost:    os.Getenv("RABBITMQ_VHOST"),
-	}
 }
 
 // setupChannel sets up a RabbitMQ Channel for a worker{}. It closes a
@@ -118,9 +109,10 @@ type Queue struct {
 
 // NewQueue creates and returns a new Queue structure
 func NewQueue(name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Queue, error) {
-	if cfg.HostName == "" || cfg.Port == "" ||
-		cfg.UserName == "" || cfg.Password == "" {
-		return nil, errors.New("HostName,Port,UserName and Password are required")
+	const urlString = "amqp://%s:%s@%s:%s/%s"
+
+	if err := getEnv(); err != nil {
+		return nil, err
 	}
 	q := &Queue{
 		name:         name,
@@ -536,4 +528,21 @@ func (q *Queue) receiveJob(ctx context.Context) *amqp.Delivery {
 		}
 		return &job
 	}
+}
+
+func getEnv() error {
+	var envErr error
+	once.Do(
+		func() {
+			envSet, err := env.EnvironToEnvSet(os.Environ())
+			if err != nil {
+				envErr = err
+			}
+			err = env.Unmarshal(envSet, &cfg)
+			if err != nil {
+				envErr = err
+			}
+		})
+
+	return envErr
 }

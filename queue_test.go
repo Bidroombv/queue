@@ -5,6 +5,7 @@ package queue
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -19,11 +20,6 @@ import (
 
 // Test graceful stop
 func TestQueueStop(t *testing.T) {
-	oldCfg := cfg
-	setEnv()
-	defer func() {
-		cfg = oldCfg
-	}()
 	t.Run("Close Consumer", func(t *testing.T) {
 		jobChannel := make(chan amqp.Delivery)
 		q, err := NewQueue(t.Name(), 3, true, false, jobChannel)
@@ -65,11 +61,6 @@ func TestQueueStop(t *testing.T) {
 // This function will do some resiliency testing (invalid URL), and deliver a
 // single message.
 func TestQueueSingle(t *testing.T) {
-	oldCfg := cfg
-	setEnv()
-	defer func() {
-		cfg = oldCfg
-	}()
 	correlationId := "abc"
 	received := make(chan bool) // this channel gets "released" on success
 
@@ -118,11 +109,6 @@ func TestQueueSingle(t *testing.T) {
 // Don't run it in parallel as it restarts the docker container that other
 // tests rely on.
 func TestQueueReconnect(t *testing.T) {
-	oldCfg := cfg
-	setEnv()
-	defer func() {
-		cfg = oldCfg
-	}()
 	num := 10000                   // Number of messages to send
 	delay := time.Millisecond * 10 // Delay between each message
 
@@ -229,11 +215,6 @@ func TestQueueReconnect(t *testing.T) {
 
 // Send many messages in parallel
 func TestQueueFast(t *testing.T) {
-	oldCfg := cfg
-	setEnv()
-	defer func() {
-		cfg = oldCfg
-	}()
 	num := 30
 	received := make(chan bool, num) // this channel gets "released" on message delivery
 	// Consumer
@@ -309,12 +290,10 @@ func CheckNumMessages(t *testing.T, queueName string, want int) {
 	}
 }
 
-func setEnv() {
-	cfg = &config{
-		HostName: "localhost",
-		Port:     "35672",
-		UserName: "guest",
-		Password: "guest",
-		Vhost:    "queue_vhost",
-	}
+func init() {
+	os.Setenv("RABBITMQ_HOSTNAME", "localhost")
+	os.Setenv("RABBITMQ_USERNAME", "guest")
+	os.Setenv("RABBITMQ_PASSWORD", "guest")
+	os.Setenv("RABBITMQ_PORT", "35672")
+	os.Setenv("RABBITMQ_VHOST", "queue_vhost")
 }
