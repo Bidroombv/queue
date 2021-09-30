@@ -18,11 +18,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+var testUrl = &url{}
+
 // Test graceful stop
 func TestQueueStop(t *testing.T) {
 	t.Run("Close Consumer", func(t *testing.T) {
 		jobChannel := make(chan amqp.Delivery)
-		q, err := NewQueue(t.Name(), 3, true, false, jobChannel)
+		q, err := NewQueue(testUrl, t.Name(), 3, true, false, jobChannel)
 		assert.NoError(t, err)
 
 		rec := func(m amqp.Delivery) *amqp.Publishing {
@@ -41,7 +43,7 @@ func TestQueueStop(t *testing.T) {
 
 	t.Run("Close Publisher", func(t *testing.T) {
 		jobChannel := make(chan amqp.Delivery)
-		q, err := NewQueue(t.Name(), 1, false, false, jobChannel)
+		q, err := NewQueue(testUrl, t.Name(), 1, false, false, jobChannel)
 		assert.NoError(t, err)
 		pub := func(d amqp.Delivery) *amqp.Publishing {
 			return nil
@@ -66,7 +68,7 @@ func TestQueueSingle(t *testing.T) {
 
 	// Consumer
 	jobChannel := make(chan amqp.Delivery)
-	qi, err := NewQueue(t.Name(), 1, true, false, jobChannel)
+	qi, err := NewQueue(testUrl, t.Name(), 1, true, false, jobChannel)
 	assert.NoError(t, err)
 	defer qi.Close()
 
@@ -79,7 +81,7 @@ func TestQueueSingle(t *testing.T) {
 	assert.NoError(t, qi.AddReceiver(rec))
 
 	jobChannel2 := make(chan amqp.Delivery)
-	qo, err := NewQueue(t.Name(), 1, false, false, jobChannel2)
+	qo, err := NewQueue(testUrl, t.Name(), 1, false, false, jobChannel2)
 	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
@@ -121,7 +123,7 @@ func TestQueueReconnect(t *testing.T) {
 
 	// Consumer
 	jobChannel := make(chan amqp.Delivery, num)
-	qi, err := NewQueue(t.Name(), 1, true, true, jobChannel)
+	qi, err := NewQueue(testUrl, t.Name(), 1, true, true, jobChannel)
 	assert.NoError(t, err)
 	defer qi.Close()
 
@@ -133,7 +135,7 @@ func TestQueueReconnect(t *testing.T) {
 	assert.NoError(t, qi.AddReceiver(rec))
 
 	jobChannel2 := make(chan amqp.Delivery, num)
-	qo, err := NewQueue(t.Name(), 1, false, true, jobChannel2)
+	qo, err := NewQueue(testUrl, t.Name(), 1, false, true, jobChannel2)
 	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
@@ -218,7 +220,7 @@ func TestQueueFast(t *testing.T) {
 	num := 30
 	received := make(chan bool, num) // this channel gets "released" on message delivery
 	// Consumer
-	qi, err := NewQueue(t.Name(), 1, true, false, nil)
+	qi, err := NewQueue(testUrl, t.Name(), 1, true, false, nil)
 	assert.NoError(t, err)
 	defer qi.Close()
 
@@ -231,7 +233,7 @@ func TestQueueFast(t *testing.T) {
 
 	// Publisher
 	jobOutChannel := make(chan amqp.Delivery)
-	qo, err := NewQueue(t.Name(), 1, false, false, jobOutChannel)
+	qo, err := NewQueue(testUrl, t.Name(), 1, false, false, jobOutChannel)
 	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
@@ -296,6 +298,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("RABBITMQ_PASSWORD", "guest")
 	os.Setenv("RABBITMQ_PORT", "35672")
 	os.Setenv("RABBITMQ_VHOST", "queue_vhost")
+	testUrl, _ = ReadCfgFromEnv()
 	exitVal := m.Run()
 	os.Clearenv()
 	os.Exit(exitVal)

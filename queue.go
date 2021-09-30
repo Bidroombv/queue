@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -23,18 +22,15 @@ var (
 
 	consumerWid  uint64 = 0
 	publisherWid uint64 = 0
-	once         sync.Once
 )
 
-type config struct {
+type url struct {
 	HostName string `env:"RABBITMQ_HOSTNAME,required=true"`
 	Port     string `env:"RABBITMQ_PORT,required=true"`
 	UserName string `env:"RABBITMQ_USERNAME,required=true"`
 	Password string `env:"RABBITMQ_PASSWORD,required=true"`
 	Vhost    string `env:"RABBITMQ_VHOST,required=true"`
 }
-
-var cfg config
 
 // WorkerFunc does all the work necessary on a Delivery message
 type WorkerFunc func(amqp.Delivery) *amqp.Publishing
@@ -108,15 +104,10 @@ type Queue struct {
 }
 
 // NewQueue creates and returns a new Queue structure
-func NewQueue(name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Queue, error) {
-	if err := getEnv(); err != nil {
-		return nil, err
-	}
-
-	const urlString = "amqp://%s:%s@%s:%s/%s"
+func NewQueue(url *url, name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Queue, error) {
 	q := &Queue{
 		name:         name,
-		url:          fmt.Sprintf(urlString, cfg.UserName, cfg.Password, cfg.HostName, cfg.Port, cfg.Vhost),
+		url:          url.urlString(),
 		isConsumer:   isConsumer,
 		Durable:      durable,
 		Jobs:         jobs,
@@ -530,21 +521,19 @@ func (q *Queue) receiveJob(ctx context.Context) *amqp.Delivery {
 	}
 }
 
-func getEnv() error {
-	var envErr error
-	//we want the env to be read only once
-	//sync.once handles the race condition
-	once.Do(
-		func() {
-			envSet, err := env.EnvironToEnvSet(os.Environ())
-			if err != nil {
-				envErr = err
-			}
-			err = env.Unmarshal(envSet, &cfg)
-			if err != nil {
-				envErr = err
-			}
-		})
+func ReadCfgFromEnv() (*url, error) {
+	url := &url{}
+	envSet, err := env.EnvironToEnvSet(os.Environ())
+	if err != nil {
+		return nil, err
+	}
+	err = env.Unmarshal(envSet, url)
+	if err != nil {
+		return nil, err
+	}
+	return url, nil
+}
 
-	return envErr
+func (url *url) urlString() string {
+	return fmt.Sprintf("amqp://%s:%s@%s:%s/%s", url.UserName, url.Password, url.HostName, url.Port, url.Vhost)
 }
