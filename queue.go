@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/Netflix/go-env"
 	"github.com/streadway/amqp"
 )
 
@@ -23,18 +23,6 @@ var (
 	publisherWid uint64 = 0
 )
 
-const urlString = "amqp://%s:%s@%s:%s/%s"
-
-type config struct {
-	HostName string
-	Port     string
-	UserName string
-	Password string
-	Vhost    string
-}
-
-var cfg *config
-
 // WorkerFunc does all the work necessary on a Delivery message
 type WorkerFunc func(amqp.Delivery) *amqp.Publishing
 
@@ -46,19 +34,21 @@ type worker struct {
 	confirms chan amqp.Confirmation
 }
 
-func init() {
-	cfg = &config{
-		HostName: os.Getenv("RABBITMQ_HOSTNAME"),
-		Port:     os.Getenv("RABBITMQ_PORT"),
-		UserName: os.Getenv("RABBITMQ_USERNAME"),
-		Password: os.Getenv("RABBITMQ_PASSWORD"),
-		Vhost:    os.Getenv("RABBITMQ_VHOST"),
-	}
+type URL struct {
+	HostName string `env:"RABBITMQ_HOSTNAME,required=true"`
+	Port     string `env:"RABBITMQ_PORT,required=true"`
+	UserName string `env:"RABBITMQ_USERNAME,required=true"`
+	Password string `env:"RABBITMQ_PASSWORD,required=true"`
+	Vhost    string `env:"RABBITMQ_VHOST,required=true"`
+}
+
+func (url *URL) urlString() string {
+	return fmt.Sprintf("amqp://%s:%s@%s:%s/%s", url.UserName, url.Password, url.HostName, url.Port, url.Vhost)
 }
 
 // setupChannel sets up a RabbitMQ Channel for a worker{}. It closes a
 // previously opened channel, if any.
-func (w *worker) setupChannel(q *Queue) error {
+func (w *worker) setupChannel(q *Channel) error {
 	if w.channel != nil {
 		w.channel.Close() // It is safe to call this method multiple times.
 	}
@@ -86,8 +76,8 @@ func (w *worker) stop() {
 	}
 }
 
-// Queue represent a AMQP queue
-type Queue struct {
+// Channel represent a AMQP queue
+type Channel struct {
 	// Name of the queue
 	name string
 	// complete URL of the queue (i.e "amqp://guest:guest@localhost:5672/")
@@ -118,24 +108,45 @@ type Queue struct {
 	workers      []worker
 }
 
-// NewQueue creates and returns a new Queue structure
-func NewQueue(name string, prefetchSize int, isConsumer, isExchange, durable bool, jobs chan amqp.Delivery) (*Queue, error) {
-	if cfg.HostName == "" || cfg.Port == "" ||
-		cfg.UserName == "" || cfg.Password == "" {
-		panic("hostname,port,username and password are required for establishing the connection")
-	}
-
-	q := &Queue{
-		name: name,
-		url:  fmt.Sprintf(urlString, cfg.UserName, cfg.Password, cfg.HostName, cfg.Port, cfg.Vhost),
-
+// NewQueue returns a new Queue structure
+func NewQueue(url *URL, name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Channel, error) {
+	q := &Channel{
+		name:         name,
+		url:          url.urlString(),
 		isConsumer:   isConsumer,
-		isExchange:   isExchange,
+		isExchange:   false,
 		Durable:      durable,
 		Jobs:         jobs,
 		prefetchSize: prefetchSize,
 		workers:      make([]worker, 0),
 	}
+
+	if err := q.connect(); err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithCancel(context.TODO())
+
+	q.cancelCtx = cancel
+
+	go q.reconnector(ctx)
+
+	return q, nil
+}
+
+// NewExchange returns a new Exchange structure
+func NewExchange(url *URL, name string, prefetchSize int, durable bool, jobs chan amqp.Delivery) (*Channel, error) {
+	q := &Channel{
+		name:         name,
+		url:          url.urlString(),
+		isConsumer:   false,
+		isExchange:   true,
+		Durable:      durable,
+		Jobs:         jobs,
+		prefetchSize: prefetchSize,
+		workers:      make([]worker, 0),
+	}
+
 	if err := q.connect(); err != nil {
 		return nil, err
 	}
@@ -150,7 +161,7 @@ func NewQueue(name string, prefetchSize int, isConsumer, isExchange, durable boo
 }
 
 // Close closes queue channels and connections
-func (q *Queue) Close() {
+func (q *Channel) Close() {
 	q.logVerbose("Closing connection to %s", q.name)
 	q.closed = true
 
@@ -162,7 +173,7 @@ func (q *Queue) Close() {
 	q.connection.Close()
 }
 
-func (q *Queue) connect() error {
+func (q *Channel) connect() error {
 	q.logVerbose("Connecting to AMQP Server on %s for queue: %s\n", q.url, q.name)
 
 	// We want to retry amqp.Dial if it fails, but only if it's reasonable
@@ -211,10 +222,10 @@ func (q *Queue) connect() error {
 		}
 	}
 
-	return q.setupQueue()
+	return q.setupConnection()
 }
 
-func (q *Queue) reconnector(ctx context.Context) {
+func (q *Channel) reconnector(ctx context.Context) {
 	defer q.logVerbose("Exiting Reconnection goroutine")
 
 	for {
@@ -234,7 +245,7 @@ func (q *Queue) reconnector(ctx context.Context) {
 
 }
 
-func (q *Queue) contestualizeReconnector(ctx context.Context) {
+func (q *Channel) contestualizeReconnector(ctx context.Context) {
 	q.logVerbose("Recontestualizing Connector------------------")
 	q.cancelCtx()
 	ctx, cancel := context.WithCancel(ctx)
@@ -243,7 +254,7 @@ func (q *Queue) contestualizeReconnector(ctx context.Context) {
 	go q.reconnector(ctx)
 }
 
-func (q *Queue) reconnectWorkers(ctx context.Context) {
+func (q *Channel) reconnectWorkers(ctx context.Context) {
 	for i := range q.workers {
 		var worker = q.workers[i]
 		q.logVerbose("Recovering worker: %d on queue: %s\n", worker.id, q.name)
@@ -258,7 +269,7 @@ func (q *Queue) reconnectWorkers(ctx context.Context) {
 	}
 }
 
-func (q *Queue) receiver(w *worker) error {
+func (q *Channel) receiver(w *worker) error {
 	ch, err := q.getChannel()
 	if err != nil {
 		q.log("Failed to get channel for consumer on %s. Error: %s", q.name, err)
@@ -306,7 +317,7 @@ func (q *Queue) receiver(w *worker) error {
 
 // sender listens on the Delivery RabbitMQ channel and fetches jobs for the
 // given worker{}.
-func (q *Queue) sender(ctx context.Context, w *worker) {
+func (q *Channel) sender(ctx context.Context, w *worker) {
 	q.logVerbose("Starting Publisher worker with id: %d", w.id)
 	started := false
 
@@ -390,12 +401,12 @@ MAIN:
 // We're observing this when the server is restarted
 //
 // XXX what does the amqp library do when the server disappears without a trace?
-func (q *Queue) checkConfirmation(m amqp.Delivery, w *worker) bool {
+func (q *Channel) checkConfirmation(m amqp.Delivery, w *worker) bool {
 	confirmed := <-w.confirms
 	return confirmed.Ack
 }
 
-func (q *Queue) ackNack(m amqp.Delivery, confirmed bool) error {
+func (q *Channel) ackNack(m amqp.Delivery, confirmed bool) error {
 	if confirmed {
 		if err := m.Ack(false); err != nil {
 			return err
@@ -411,7 +422,7 @@ func (q *Queue) ackNack(m amqp.Delivery, confirmed bool) error {
 
 // AddReceiver start consuming messages on channel ch from the queue and
 // posts deliveries to the WorkerFunc
-func (q *Queue) AddReceiver(cf WorkerFunc) error {
+func (q *Channel) AddReceiver(cf WorkerFunc) error {
 	if !q.isConsumer {
 		panic("Adding a Consumer on a publishing Queue")
 	}
@@ -433,7 +444,7 @@ func (q *Queue) AddReceiver(cf WorkerFunc) error {
 }
 
 // AddPublisher adds a publisher to the worker pool
-func (q *Queue) AddPublisher(ctx context.Context, pf WorkerFunc) error {
+func (q *Channel) AddPublisher(ctx context.Context, pf WorkerFunc) error {
 	if q.isConsumer {
 		panic("Adding a Publisher on a consumer Queue")
 	}
@@ -454,12 +465,12 @@ func (q *Queue) AddPublisher(ctx context.Context, pf WorkerFunc) error {
 }
 
 // getChannel gets a channel from the Queue
-func (q *Queue) getChannel() (ch *amqp.Channel, err error) {
+func (q *Channel) getChannel() (ch *amqp.Channel, err error) {
 	return q.connection.Channel()
 }
 
-// setupQueue declares a Queue named queueName
-func (q *Queue) setupQueue() error {
+// setupConnection declares a Queue or Exchange connection
+func (q *Channel) setupConnection() error {
 	if q.name == "" {
 		return errors.New("no queue or exchange name provided")
 	}
@@ -478,7 +489,7 @@ func (q *Queue) setupQueue() error {
 }
 
 // setConsumerQoS sets QoS on a channel with a prefetch value
-func (q *Queue) setConsumerQoS(prefetch int, global bool) error {
+func (q *Channel) setConsumerQoS(prefetch int, global bool) error {
 	if q.channel != nil && q.name != "" {
 		return q.channel.Qos(
 			prefetch, // prefetch count
@@ -490,7 +501,7 @@ func (q *Queue) setConsumerQoS(prefetch int, global bool) error {
 }
 
 // publish sends a message on a channel if provided, otherwise get a new channel from the queue connection
-func (q *Queue) publish(message *amqp.Publishing, ch *amqp.Channel) error {
+func (q *Channel) publish(message *amqp.Publishing, ch *amqp.Channel) error {
 	if q.isConsumer {
 		return errors.New("publishing on a consumer queue")
 	}
@@ -525,7 +536,7 @@ func (q *Queue) publish(message *amqp.Publishing, ch *amqp.Channel) error {
 
 // receiveJob returns a job from the .Jobs queue, blocking if necessary. If
 // execution is canceled in any way it returns nil.
-func (q *Queue) receiveJob(ctx context.Context) *amqp.Delivery {
+func (q *Channel) receiveJob(ctx context.Context) *amqp.Delivery {
 	select {
 	case <-ctx.Done():
 		return nil
@@ -537,4 +548,13 @@ func (q *Queue) receiveJob(ctx context.Context) *amqp.Delivery {
 		}
 		return &job
 	}
+}
+
+func ReadCfgFromEnv() (*URL, error) {
+	url := &URL{}
+	if _, err := env.UnmarshalFromEnviron(url); err != nil {
+		return nil, err
+	}
+
+	return url, nil
 }
