@@ -110,37 +110,20 @@ type Channel struct {
 
 // NewQueue returns a new Queue structure
 func NewQueue(url *URL, name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Channel, error) {
-	q := &Channel{
-		name:         name,
-		url:          url.urlString(),
-		isConsumer:   isConsumer,
-		isExchange:   false,
-		Durable:      durable,
-		Jobs:         jobs,
-		prefetchSize: prefetchSize,
-		workers:      make([]worker, 0),
-	}
-
-	if err := q.connect(); err != nil {
-		return nil, err
-	}
-
-	ctx, cancel := context.WithCancel(context.TODO())
-
-	q.cancelCtx = cancel
-
-	go q.reconnector(ctx)
-
-	return q, nil
+	return NewChannel(url, name, prefetchSize, isConsumer, false, durable, jobs)
 }
 
 // NewExchange returns a new Exchange structure
 func NewExchange(url *URL, name string, prefetchSize int, durable bool, jobs chan amqp.Delivery) (*Channel, error) {
+	return NewChannel(url, name, prefetchSize, false, true, durable, jobs)
+}
+
+func NewChannel(url *URL, name string, prefetchSize int, isConsumer, isExchange, durable bool, jobs chan amqp.Delivery)(*Channel, error)  {
 	q := &Channel{
 		name:         name,
 		url:          url.urlString(),
-		isConsumer:   false,
-		isExchange:   true,
+		isConsumer:   isConsumer,
+		isExchange:   isExchange,
 		Durable:      durable,
 		Jobs:         jobs,
 		prefetchSize: prefetchSize,
