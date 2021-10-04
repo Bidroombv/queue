@@ -295,7 +295,7 @@ func TestQueueFastWithExchange(t *testing.T) {
 	}
 	assert.NoError(t, qo.AddPublisher(context.TODO(), pub))
 
-	t.Run("Multiple", func(t *testing.T) {
+	t.Run("Multiple", func() {
 		var wg sync.WaitGroup
 		wg.Add(num)
 		for i := 0; i < num; i++ {
