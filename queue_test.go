@@ -264,6 +264,55 @@ func TestQueueFast(t *testing.T) {
 	CheckNumMessages(t, t.Name(), 0)
 }
 
+// Send many messages in parallel with Exchange
+func TestQueueFastWithExchange(t *testing.T) {
+	num := 30
+	received := make(chan bool, num) // this channel gets "released" on message delivery
+	// Consumer
+	qi, err := NewQueue(testUrl, t.Name(), 1, true, false, nil)
+	assert.NoError(t, err)
+	defer qi.Close()
+
+	rec := func(m amqp.Delivery) *amqp.Publishing {
+		assert.NoError(t, m.Ack(false))
+		received <- true
+		return nil
+	}
+	assert.NoError(t, qi.AddReceiver(rec))
+
+	// Publisher
+	jobOutChannel := make(chan amqp.Delivery)
+	qo, err := NewExchange(testUrl, t.Name(), 1, true, jobOutChannel)
+	assert.NoError(t, err)
+	defer qo.Close()
+	pub := func(d amqp.Delivery) *amqp.Publishing {
+		return &amqp.Publishing{
+			ContentType:   d.ContentType,
+			CorrelationId: d.CorrelationId,
+			Body:          d.Body,
+			Headers:       d.Headers,
+		}
+	}
+	assert.NoError(t, qo.AddPublisher(context.TODO(), pub))
+
+	t.Run("Multiple", func(t *testing.T) {
+		var wg sync.WaitGroup
+		wg.Add(num)
+		for i := 0; i < num; i++ {
+			i := i
+			go func() {
+				defer wg.Done()
+				jobOutChannel <- amqp.Delivery{CorrelationId: fmt.Sprintf("%d", i)}
+
+				<-received
+			}()
+		}
+		wg.Wait()
+	})
+
+	CheckNumMessages(t, t.Name(), 0)
+}
+
 // This function checks the number of Messages on a queue. Usually, after a
 // test finishes running, we want that value to be 0.
 func CheckNumMessages(t *testing.T, queueName string, want int) {
