@@ -110,15 +110,15 @@ type Channel struct {
 
 // NewQueue returns a new Queue structure
 func NewQueue(url *URL, name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Channel, error) {
-	return NewChannel(url, name, prefetchSize, isConsumer, false, durable, jobs)
+	return newChannel(url, name, prefetchSize, isConsumer, false, durable, jobs)
 }
 
 // NewExchange returns a new Exchange structure
 func NewExchange(url *URL, name string, prefetchSize int, durable bool, jobs chan amqp.Delivery) (*Channel, error) {
-	return NewChannel(url, name, prefetchSize, false, true, durable, jobs)
+	return newChannel(url, name, prefetchSize, false, true, durable, jobs)
 }
 
-func NewChannel(url *URL, name string, prefetchSize int, isConsumer, isExchange, durable bool, jobs chan amqp.Delivery)(*Channel, error)  {
+func newChannel(url *URL, name string, prefetchSize int, isConsumer, isExchange, durable bool, jobs chan amqp.Delivery)(*Channel, error)  {
 	q := &Channel{
 		name:         name,
 		url:          url.urlString(),
