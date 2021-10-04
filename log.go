@@ -13,14 +13,14 @@ type LoggerI interface {
 }
 
 // logPrintf writes to m.Log if not nil
-func (q *Queue) log(format string, v ...interface{}) {
+func (q *Channel) log(format string, v ...interface{}) {
 	if q.Log != nil {
 		q.Log.Printf(format, v...)
 	}
 }
 
 // logVerbosePrintf writes to m.Log if not nil. Use for verbose logging output.
-func (q *Queue) logVerbose(format string, v ...interface{}) {
+func (q *Channel) logVerbose(format string, v ...interface{}) {
 	if q.Log != nil && q.Log.Verbose() {
 		q.Log.Printf(format, v...)
 	}
