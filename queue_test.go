@@ -295,7 +295,7 @@ func TestQueueFastWithExchange(t *testing.T) {
 	}
 	assert.NoError(t, qo.AddPublisher(context.TODO(), pub))
 
-	t.Run("Multiple", func() {
+	t.Run("Multiple", func(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(num)
 		for i := 0; i < num; i++ {
@@ -346,7 +346,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("RABBITMQ_USERNAME", "guest")
 	os.Setenv("RABBITMQ_PASSWORD", "guest")
 	os.Setenv("RABBITMQ_PORT", "35672")
-	os.Setenv("RABBITMQ_VHOST", "queue_vhost")
+	os.Setenv("RABBITMQ_VHOST", "/queue_vhost")
 	testUrl, _ = ReadCfgFromEnv()
 	exitVal := m.Run()
 	os.Clearenv()
