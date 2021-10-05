@@ -43,7 +43,7 @@ type URL struct {
 }
 
 func (url *URL) urlString() string {
-	return fmt.Sprintf("amqp://%s:%s@%s:%s/%s", url.UserName, url.Password, url.HostName, url.Port, url.Vhost)
+	return fmt.Sprintf("amqp://%s:%s@%s:%s%s", url.UserName, url.Password, url.HostName, url.Port, url.Vhost)
 }
 
 // setupChannel sets up a RabbitMQ Channel for a worker{}. It closes a
@@ -118,7 +118,7 @@ func NewExchange(url *URL, name string, prefetchSize int, durable bool, jobs cha
 	return newChannel(url, name, prefetchSize, false, true, durable, jobs)
 }
 
-func newChannel(url *URL, name string, prefetchSize int, isConsumer, isExchange, durable bool, jobs chan amqp.Delivery)(*Channel, error)  {
+func newChannel(url *URL, name string, prefetchSize int, isConsumer, isExchange, durable bool, jobs chan amqp.Delivery) (*Channel, error) {
 	q := &Channel{
 		name:         name,
 		url:          url.urlString(),
