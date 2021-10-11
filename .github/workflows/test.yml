@@ -1,0 +1,19 @@
+name: tests
+on: [pull_request]
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        type: [test, test-race]
+    steps:
+      - name: Checkout code into workspace
+        uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: 1.17
+      - name: Grant private package access
+        run: git config --global url."https://${{ secrets.GLOBAL_ACCESS_TOKEN }}:x-oauth-basic@github.com/Bidroombv".insteadOf "https://github.com/Bidroombv"
+      - name: Perform tests
+        run: make ${{matrix.type}}

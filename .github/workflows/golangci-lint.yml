@@ -2,19 +2,15 @@ name: golangci-lint
 on: [pull_request]
 jobs:
   golangci-lint:
-    name: runner / golangci-lint
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - name: Check out code into the Go module directory
-        uses: actions/checkout@v1
-      - name: golangci-lint
-        uses: docker://reviewdog/action-golangci-lint:v1.1.3
-        env:
-          GL_DEBUG: linters_output
-          GOPACKAGESPRINTGOLISTERRORS: 1
+        uses: actions/checkout@v2
+      - name: Grant private package access
+        run: |
+          git config --global url."https://${{ secrets.GLOBAL_ACCESS_TOKEN }}:x-oauth-basic@github.com/Bidroombv".insteadOf "https://github.com/Bidroombv"
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v2
         with:
-          github_token: ${{ secrets.github_token }}
-          tool_name: "golangci-lint"
-          level: warning
-          golangci_lint_flags: "--build-tags rabbitmq ./..."
-          reporter: "github-pr-check"
+          version: latest

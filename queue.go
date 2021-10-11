@@ -86,8 +86,6 @@ type Channel struct {
 
 	// ConnectionErr receives errors from the Connection in case of disconnection
 	connectionErr chan *amqp.Error
-	// closed signal a purposeful close of the queue
-	closed bool
 	// consumer specifies if this queue is for consuming messages or for publishing
 	isConsumer bool
 	// isExchange specifies if this is queue or an exchange
@@ -123,7 +121,7 @@ func newChannel(url *URL, name string, prefetchSize int, isConsumer, isExchange,
 		isExchange:   isExchange,
 		Durable:      durable,
 		Jobs:         jobs,
-		log:          setupLogger(*url, isExchange, name),
+		log:          setupLogger(*url, isExchange, isConsumer, name),
 		prefetchSize: prefetchSize,
 		workers:      make([]worker, 0),
 	}
@@ -141,15 +139,22 @@ func newChannel(url *URL, name string, prefetchSize int, isConsumer, isExchange,
 	return q, nil
 }
 
-func setupLogger(url URL, isExchange bool, name string) *zerolog.Logger {
-	var t string
+func setupLogger(url URL, isExchange bool, isConsumer bool, name string) *zerolog.Logger {
+	var kind string
 	if isExchange {
-		t = "exchange"
+		kind = "exchange"
 	} else {
-		t = "queue"
+		kind = "queue"
 	}
 
-	l := log.Logger.With().Str(t, name).Logger()
+	var mode string
+	if isConsumer {
+		mode = "consumer"
+	} else {
+		mode = "publisher"
+	}
+
+	l := log.Logger.With().Str(kind, name).Str("mode", mode).Logger()
 
 	url.UserName = "***"
 	url.Password = "***"
@@ -161,7 +166,7 @@ func setupLogger(url URL, isExchange bool, name string) *zerolog.Logger {
 // Close closes queue channels and connections
 func (q *Channel) Close() {
 	q.log.Info().Msg("closing connection")
-	q.closed = true
+	q.cancelCtx()
 
 	for _, w := range q.workers {
 		w.stop()
@@ -232,7 +237,7 @@ func (q *Channel) reconnector(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case amqpError := <-q.connectionErr:
-			if !q.closed && amqpError != nil {
+			if amqpError != nil {
 				q.log.Warn().Err(amqpError).Msg("connection closed, reconnecting")
 				if err := q.connect(); err != nil {
 					q.log.Error().Err(err).Msg("reconnect failed")
@@ -260,7 +265,7 @@ func logWorkerID(log *zerolog.Logger, id uint64) *zerolog.Logger {
 func (q *Channel) reconnectWorkers(ctx context.Context) {
 	for i := range q.workers {
 		var worker = q.workers[i]
-		logWorker := logWorkerID(q.log, uint64(i))
+		logWorker := logWorkerID(q.log, q.workers[i].id)
 		logWorker.Info().Msg("recovering worker")
 		if q.isConsumer {
 			if err := q.receiver(&worker, logWorker); err != nil {
@@ -307,11 +312,12 @@ func (q *Channel) receiver(w *worker, log *zerolog.Logger) error {
 
 	// listen on the Delivery channel and distribute jobs to workers
 	go func() {
-		log.Debug().Msg("START listening")
 		for m := range msgs {
+			logMessage := logCorrelationID(log, m.CorrelationId)
+			logMessage.Info().Msg("started job")
 			w.work(m)
+			logMessage.Info().Msg("finished job")
 		}
-		log.Debug().Msg("STOP listening")
 	}()
 
 	return nil
