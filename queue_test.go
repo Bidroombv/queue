@@ -1,3 +1,4 @@
+//go:build rabbitmq
 // +build rabbitmq
 
 package queue
