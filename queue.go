@@ -10,15 +10,12 @@ import (
 
 	"github.com/Netflix/go-env"
 	"github.com/streadway/amqp"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 var (
-	// ErrConfirmFailed Error confirm failed
-	ErrConfirmFailed = fmt.Errorf("confirm failed")
-
-	// ErrAckNackFailed Error ack failed
-	ErrAckNackFailed = fmt.Errorf("Ack failed")
-
 	consumerWid  uint64 = 0
 	publisherWid uint64 = 0
 )
@@ -100,12 +97,12 @@ type Channel struct {
 
 	// Jobs is the channel where messages are sent
 	Jobs chan amqp.Delivery
-	// Log is the logging interface of this Queue
-	Log LoggerI
 
 	cancelCtx    context.CancelFunc
 	prefetchSize int
 	workers      []worker
+
+	log *zerolog.Logger
 }
 
 // NewQueue returns a new Queue structure
@@ -126,6 +123,7 @@ func newChannel(url *URL, name string, prefetchSize int, isConsumer, isExchange,
 		isExchange:   isExchange,
 		Durable:      durable,
 		Jobs:         jobs,
+		log:          setupLogger(*url, isExchange, name),
 		prefetchSize: prefetchSize,
 		workers:      make([]worker, 0),
 	}
@@ -143,9 +141,26 @@ func newChannel(url *URL, name string, prefetchSize int, isConsumer, isExchange,
 	return q, nil
 }
 
+func setupLogger(url URL, isExchange bool, name string) *zerolog.Logger {
+	var t string
+	if isExchange {
+		t = "exchange"
+	} else {
+		t = "queue"
+	}
+
+	l := log.Logger.With().Str(t, name).Logger()
+
+	url.UserName = "***"
+	url.Password = "***"
+	l.Info().Str("url", url.urlString()).Msg("amqp url")
+
+	return &l
+}
+
 // Close closes queue channels and connections
 func (q *Channel) Close() {
-	q.logVerbose("Closing connection to %s", q.name)
+	q.log.Info().Msg("closing connection")
 	q.closed = true
 
 	for _, w := range q.workers {
@@ -157,7 +172,7 @@ func (q *Channel) Close() {
 }
 
 func (q *Channel) connect() error {
-	q.logVerbose("Connecting to AMQP Server on %s for queue: %s\n", q.url, q.name)
+	q.log.Info().Msg("connecting")
 
 	// We want to retry amqp.Dial if it fails, but only if it's reasonable
 	// to do so.
@@ -176,10 +191,11 @@ func (q *Channel) connect() error {
 	for err != nil {
 		// In addition to the errors returned by ParseURI we may
 		// attempt to connect to a non-existent host
+		q.log.Error().Err(err).Msg("failed to dial")
 		if strings.Contains(err.Error(), ": no such host") {
 			return err
 		}
-		q.log("Failed to dial to AMQP Server on %s for queue: %s. Error: %s\n", q.url, q.name, err)
+
 		time.Sleep(500 * time.Millisecond)
 		conn, err = amqp.Dial(q.url)
 	}
@@ -189,7 +205,7 @@ func (q *Channel) connect() error {
 	// this channel will be closed when Queue Channel is closed
 	q.connectionErr = q.connection.NotifyClose(make(chan *amqp.Error))
 
-	q.logVerbose("Connection established on queue: %s", q.name)
+	q.log.Info().Msg("connection established")
 
 	ch, err := q.getChannel()
 	if err != nil {
@@ -200,7 +216,7 @@ func (q *Channel) connect() error {
 
 	if q.isConsumer {
 		if err := q.setConsumerQoS(q.prefetchSize, true); err != nil {
-			q.log("setConsumerQoS() error: %s", err)
+			q.log.Error().Err(err).Msg("setConsumerQoS()")
 			// XXX error not really handled
 		}
 	}
@@ -209,7 +225,7 @@ func (q *Channel) connect() error {
 }
 
 func (q *Channel) reconnector(ctx context.Context) {
-	defer q.logVerbose("Exiting Reconnection goroutine")
+	defer q.log.Debug().Msg("exiting reconnection goroutine")
 
 	for {
 		select {
@@ -217,9 +233,9 @@ func (q *Channel) reconnector(ctx context.Context) {
 			return
 		case amqpError := <-q.connectionErr:
 			if !q.closed && amqpError != nil {
-				q.log("Connection on queue %s closed with error %+v. Reconnecting.", q.name, amqpError)
+				q.log.Warn().Err(amqpError).Msg("connection closed, reconnecting")
 				if err := q.connect(); err != nil {
-					q.log("Connect() on queue %s failed with error: %s", q.name, err)
+					q.log.Error().Err(err).Msg("reconnect failed")
 				}
 				q.reconnectWorkers(ctx)
 			}
@@ -229,33 +245,37 @@ func (q *Channel) reconnector(ctx context.Context) {
 }
 
 func (q *Channel) contestualizeReconnector(ctx context.Context) {
-	q.logVerbose("Recontestualizing Connector------------------")
+	q.log.Debug().Msg("recontestualizing reconnector")
 	q.cancelCtx()
 	ctx, cancel := context.WithCancel(ctx)
 	q.cancelCtx = cancel
-
 	go q.reconnector(ctx)
+}
+
+func logWorkerID(log *zerolog.Logger, id uint64) *zerolog.Logger {
+	l := log.With().Uint64("worker", id).Logger()
+	return &l
 }
 
 func (q *Channel) reconnectWorkers(ctx context.Context) {
 	for i := range q.workers {
 		var worker = q.workers[i]
-		q.logVerbose("Recovering worker: %d on queue: %s\n", worker.id, q.name)
+		logWorker := logWorkerID(q.log, uint64(i))
+		logWorker.Info().Msg("recovering worker")
 		if q.isConsumer {
-			if err := q.receiver(&worker); err != nil {
-				q.log("receiver() for worker/queue %d/%s failed with error: %s\n",
-					worker.id, q.name, err)
+			if err := q.receiver(&worker, logWorker); err != nil {
+				logWorker.Error().Err(err).Msg("q.receiver(&worker)")
 			}
 		} else {
-			go q.sender(ctx, &worker)
+			go q.sender(ctx, &worker, logWorker)
 		}
 	}
 }
 
-func (q *Channel) receiver(w *worker) error {
+func (q *Channel) receiver(w *worker, log *zerolog.Logger) error {
 	ch, err := q.getChannel()
 	if err != nil {
-		q.log("Failed to get channel for consumer on %s. Error: %s", q.name, err)
+		log.Error().Err(err).Msg("q.getChannel()")
 		return err
 	}
 
@@ -266,7 +286,7 @@ func (q *Channel) receiver(w *worker) error {
 	)
 
 	if err != nil {
-		q.log("Failed to set QoS for consumer on %s. Error: %s", q.name, err)
+		log.Error().Err(err).Msg("ch.Qox()")
 		// this is non blocking error
 	}
 	w.channel = ch
@@ -281,33 +301,37 @@ func (q *Channel) receiver(w *worker) error {
 		nil,    // args
 	)
 	if err != nil {
-		q.log("Failed to register consumer on %s. Error: %s", q.name, err)
+		log.Error().Err(err).Msg("register error")
 		return err
 	}
 
 	// listen on the Delivery channel and distribute jobs to workers
 	go func() {
-		q.logVerbose("START Listening on queue: %s", q.name)
-
+		log.Debug().Msg("START listening")
 		for m := range msgs {
 			w.work(m)
 		}
-		q.logVerbose("STOP Listening on queue: %s", q.name)
+		log.Debug().Msg("STOP listening")
 	}()
 
 	return nil
 }
 
+func logCorrelationID(log *zerolog.Logger, correlationID string) *zerolog.Logger {
+	l := log.With().Str("correlation_id", correlationID).Logger()
+	return &l
+}
+
 // sender listens on the Delivery RabbitMQ channel and fetches jobs for the
 // given worker{}.
-func (q *Channel) sender(ctx context.Context, w *worker) {
-	q.logVerbose("Starting Publisher worker with id: %d", w.id)
+func (q *Channel) sender(ctx context.Context, w *worker, log *zerolog.Logger) {
+	log.Info().Msg("starting publisher")
 	started := false
 
 MAIN:
 	for {
 		if started {
-			q.logVerbose("Restarting Publisher worker with id: %d", w.id)
+			log.Info().Msg("restarting publisher")
 		}
 		started = true
 
@@ -323,7 +347,8 @@ MAIN:
 				break // graceful exit
 			}
 
-			q.logVerbose("Worker %d started job on correlationId: %s\n", w.id, m.CorrelationId)
+			logMessage := logCorrelationID(log, m.CorrelationId)
+			logMessage.Info().Msg("started job")
 
 			publishing := w.work(*m)
 
@@ -331,14 +356,13 @@ MAIN:
 			// result in either message Duplication or Loss.
 			if err := q.publish(publishing, w.channel); err != nil {
 				// Destination RabbitMQ didn't accept our message
-				q.log("Failed to publish message with CorrelationId %s. Error: %s",
-					m.CorrelationId, err)
+				logMessage.Error().Err(err).Msg("publish fail")
 				if err := m.Nack(false, false); err != nil {
 					// Source RabbitMQ didn't receive our Nack
 					//
 					// If it crashed the message will be lost
 					// If it's lagging the message will be retried
-					q.log("sender Nack() of %s Failed with %s\n", m.CorrelationId, err)
+					logMessage.Error().Err(err).Msg("sender Nack()")
 				}
 
 				// Reconnect
@@ -349,8 +373,7 @@ MAIN:
 			if !confirmed {
 				// Destination RabbitMQ didn't confirm our
 				// message, but it accepted it earlier.
-				q.log("Failed to get confirmation of %s\n",
-					m.CorrelationId)
+				logMessage.Error().Msg("check confirmation")
 
 				// XXX reconnect, but only if no Ack received (as opposed to negative ack)?
 			}
@@ -364,16 +387,18 @@ MAIN:
 				// If confirmed == true:
 				//   If Source RabbitMQ crashed it's OK
 				//   If it's just lagging the message will be duplicated
-				q.log("Failed to Ack/Nack %s, error: %s\n", m.CorrelationId, err)
+				if err.Error() != "delivery not initialized" {
+					logMessage.Error().Err(err).Msg("Ack/Nack")
+				}
 			}
 
-			q.logVerbose("Worker %d finished job with CorrelationId: %s\n", w.id, m.CorrelationId)
+			logMessage.Info().Msg("finished job")
 		}
 
 		break // graceful exit
 	}
 
-	q.logVerbose("Stopping Publisher worker with id: %d", w.id)
+	log.Info().Msg("stopping publisher")
 	w.channel.Close()
 }
 
@@ -414,14 +439,14 @@ func (q *Channel) AddReceiver(cf WorkerFunc) error {
 
 	consumer := &worker{id: newConsumerWid, work: cf}
 
-	if err := q.receiver(consumer); err != nil {
+	logWorker := logWorkerID(q.log, consumer.id)
+	logWorker.Info().Msg("starting consumer")
+	if err := q.receiver(consumer, logWorker); err != nil {
 		return err
 	}
 
 	// add consumer to the list
 	q.workers = append(q.workers, *consumer)
-
-	q.logVerbose("Starting Consumer worker with id: %d", newConsumerWid)
 
 	return nil
 }
@@ -439,10 +464,11 @@ func (q *Channel) AddPublisher(ctx context.Context, pf WorkerFunc) error {
 	if len(q.workers) == 0 {
 		q.contestualizeReconnector(ctx)
 	}
-	// add publisher to the list
+
 	q.workers = append(q.workers, *publisher)
 
-	go q.sender(ctx, publisher)
+	logWorker := logWorkerID(q.log, publisher.id)
+	go q.sender(ctx, publisher, logWorker)
 
 	return nil
 }
@@ -455,20 +481,23 @@ func (q *Channel) getChannel() (ch *amqp.Channel, err error) {
 // setupConnection declares a Queue or Exchange connection
 func (q *Channel) setupConnection() error {
 	if q.name == "" {
-		return errors.New("no queue or exchange name provided")
+		err := errors.New("no queue or exchange name provided")
+		log.Error().Err(err).Send()
+		return err
 	}
 
+	var err error
 	if q.isExchange {
-		if err := q.channel.ExchangeDeclarePassive(q.name, "fanout", true, false, false, false, nil); err != nil {
-			return err
-		}
+		err = q.channel.ExchangeDeclarePassive(q.name, "fanout", true, false, false, false, nil)
 	} else {
-		if _, err := q.channel.QueueDeclarePassive(q.name, q.Durable, false, false, false, nil); err != nil {
-			return err
-		}
+		_, err = q.channel.QueueDeclarePassive(q.name, q.Durable, false, false, false, nil)
 	}
 
-	return nil
+	if err != nil {
+		q.log.Error().Err(err).Msg("declare passive")
+	}
+
+	return err
 }
 
 // setConsumerQoS sets QoS on a channel with a prefetch value
