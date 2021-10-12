@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestQueueStop(t *testing.T) {
+func TestClientStop(t *testing.T) {
 	t.Parallel()
 	rabbitC, url := runRabbitContainer(t)
 	defer func() { require.NoError(t, rabbitC.Terminate(context.Background())) }()
@@ -66,7 +66,7 @@ func TestQueueStop(t *testing.T) {
 	})
 }
 
-func TestQueueSingle(t *testing.T) {
+func TestClientSingle(t *testing.T) {
 	t.Parallel()
 	rabbitC, url := runRabbitContainer(t)
 	defer func() { require.NoError(t, rabbitC.Terminate(context.Background())) }()
@@ -116,7 +116,7 @@ func TestQueueSingle(t *testing.T) {
 
 // This test will send many messages, each with a short delay, and restart
 // the rabbitmq server sometime in the middle of that.
-func TestQueueReconnect(t *testing.T) {
+func TestClientReconnect(t *testing.T) {
 	t.Parallel()
 	rabbitC, url := runRabbitContainer(t)
 	defer func() { require.NoError(t, rabbitC.Terminate(context.Background())) }()
@@ -243,7 +243,7 @@ func TestQueueReconnect(t *testing.T) {
 }
 
 // Send many messages in parallel
-func TestQueueFast(t *testing.T) {
+func TestClientFast(t *testing.T) {
 	t.Parallel()
 	rabbitC, url := runRabbitContainer(t)
 	defer func() { require.NoError(t, rabbitC.Terminate(context.Background())) }()
@@ -298,7 +298,7 @@ func TestQueueFast(t *testing.T) {
 }
 
 // Send many messages in parallel with Exchange
-func TestQueueFastWithExchange(t *testing.T) {
+func TestClientFastWithExchange(t *testing.T) {
 	t.Parallel()
 	rabbitC, url := runRabbitContainer(t)
 	defer func() { require.NoError(t, rabbitC.Terminate(context.Background())) }()
