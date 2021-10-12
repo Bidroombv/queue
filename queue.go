@@ -43,9 +43,9 @@ func (url *URL) urlString() string {
 	return fmt.Sprintf("amqp://%s:%s@%s:%s%s", url.UserName, url.Password, url.HostName, url.Port, url.Vhost)
 }
 
-// setupChannel sets up a RabbitMQ Channel for a worker{}. It closes a
+// setupChannel sets up a *amqp.Channel for a worker{}. It closes a
 // previously opened channel, if any.
-func (w *worker) setupChannel(q *Channel) error {
+func (w *worker) setupChannel(q *Client) error {
 	if w.channel != nil {
 		w.channel.Close() // It is safe to call this method multiple times.
 	}
@@ -56,7 +56,7 @@ func (w *worker) setupChannel(q *Channel) error {
 	}
 	w.channel = ch
 
-	// this channel is going to be closed when the Queue Channel is closed
+	// this channel is going to be closed when the Queue Client is closed
 	confirms := make(chan amqp.Confirmation, 1)
 
 	w.confirms = w.channel.NotifyPublish(confirms)
@@ -73,9 +73,9 @@ func (w *worker) stop() {
 	}
 }
 
-// Channel represent a AMQP queue
-type Channel struct {
-	// Name of the queue
+// Client is a wrapper around *amqp.Connection which allow interaction with one queue/exchange.
+type Client struct {
+	// Name of the queue/exchange
 	name string
 	// complete URL of the queue (i.e "amqp://guest:guest@localhost:5672/")
 	url string
@@ -103,18 +103,18 @@ type Channel struct {
 	log *zerolog.Logger
 }
 
-// NewQueue returns a new Queue structure
-func NewQueue(url *URL, name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Channel, error) {
-	return newChannel(url, name, prefetchSize, isConsumer, false, durable, jobs)
+// NewQueue connects to the queue.
+func NewQueue(url *URL, name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Client, error) {
+	return newClient(url, name, prefetchSize, isConsumer, false, durable, jobs)
 }
 
-// NewExchange returns a new Exchange structure
-func NewExchange(url *URL, name string, prefetchSize int, durable bool, jobs chan amqp.Delivery) (*Channel, error) {
-	return newChannel(url, name, prefetchSize, false, true, durable, jobs)
+// NewExchange connects to the exchange.
+func NewExchange(url *URL, name string, prefetchSize int, durable bool, jobs chan amqp.Delivery) (*Client, error) {
+	return newClient(url, name, prefetchSize, false, true, durable, jobs)
 }
 
-func newChannel(url *URL, name string, prefetchSize int, isConsumer, isExchange, durable bool, jobs chan amqp.Delivery) (*Channel, error) {
-	q := &Channel{
+func newClient(url *URL, name string, prefetchSize int, isConsumer, isExchange, durable bool, jobs chan amqp.Delivery) (*Client, error) {
+	c := &Client{
 		name:         name,
 		url:          url.urlString(),
 		isConsumer:   isConsumer,
@@ -126,17 +126,17 @@ func newChannel(url *URL, name string, prefetchSize int, isConsumer, isExchange,
 		workers:      make([]worker, 0),
 	}
 
-	if err := q.connect(); err != nil {
+	if err := c.connect(); err != nil {
 		return nil, err
 	}
 
 	ctx, cancel := context.WithCancel(context.TODO())
 
-	q.cancelCtx = cancel
+	c.cancelCtx = cancel
 
-	go q.reconnector(ctx)
+	go c.reconnector(ctx)
 
-	return q, nil
+	return c, nil
 }
 
 func setupLogger(url URL, isExchange bool, isConsumer bool, name string) *zerolog.Logger {
@@ -163,21 +163,21 @@ func setupLogger(url URL, isExchange bool, isConsumer bool, name string) *zerolo
 	return &l
 }
 
-// Close closes queue channels and connections
-func (q *Channel) Close() {
-	q.log.Info().Msg("closing connection")
-	q.cancelCtx()
+// Close closes everything.
+func (c *Client) Close() {
+	c.log.Info().Msg("closing connection")
+	c.cancelCtx()
 
-	for _, w := range q.workers {
+	for _, w := range c.workers {
 		w.stop()
 	}
-	q.workers = nil
-	q.channel.Close()
-	q.connection.Close()
+	c.workers = nil
+	c.channel.Close()
+	c.connection.Close()
 }
 
-func (q *Channel) connect() error {
-	q.log.Info().Msg("connecting")
+func (c *Client) connect() error {
+	c.log.Info().Msg("connecting")
 
 	// We want to retry amqp.Dial if it fails, but only if it's reasonable
 	// to do so.
@@ -187,74 +187,74 @@ func (q *Channel) connect() error {
 	// - It's unreasonable if the url is invalid (ParseURI() fails).
 	// We have no easy way to differentiate between these two error
 	// conditions, so as a workaround let's see if ParseURI() succeeds here.
-	if _, err := amqp.ParseURI(q.url); err != nil {
+	if _, err := amqp.ParseURI(c.url); err != nil {
 		return err
 	}
 
 	var conn *amqp.Connection
-	conn, err := amqp.Dial(q.url)
+	conn, err := amqp.Dial(c.url)
 	for err != nil {
 		// In addition to the errors returned by ParseURI we may
 		// attempt to connect to a non-existent host
-		q.log.Error().Err(err).Msg("failed to dial")
+		c.log.Error().Err(err).Msg("failed to dial")
 		if strings.Contains(err.Error(), ": no such host") {
 			return err
 		}
 
 		time.Sleep(500 * time.Millisecond)
-		conn, err = amqp.Dial(q.url)
+		conn, err = amqp.Dial(c.url)
 	}
 
-	q.connection = conn
+	c.connection = conn
 
-	// this channel will be closed when Queue Channel is closed
-	q.connectionErr = q.connection.NotifyClose(make(chan *amqp.Error))
+	// this channel will be closed when Queue Client is closed
+	c.connectionErr = c.connection.NotifyClose(make(chan *amqp.Error))
 
-	q.log.Info().Msg("connection established")
+	c.log.Info().Msg("connection established")
 
-	ch, err := q.getChannel()
+	ch, err := c.getChannel()
 	if err != nil {
 		return err
 	}
 
-	q.channel = ch
+	c.channel = ch
 
-	if q.isConsumer {
-		if err := q.setConsumerQoS(q.prefetchSize, true); err != nil {
-			q.log.Error().Err(err).Msg("setConsumerQoS()")
+	if c.isConsumer {
+		if err := c.setConsumerQoS(c.prefetchSize, true); err != nil {
+			c.log.Error().Err(err).Msg("setConsumerQoS()")
 			// XXX error not really handled
 		}
 	}
 
-	return q.setupConnection()
+	return c.setupConnection()
 }
 
-func (q *Channel) reconnector(ctx context.Context) {
-	defer q.log.Debug().Msg("exiting reconnection goroutine")
+func (c *Client) reconnector(ctx context.Context) {
+	defer c.log.Debug().Msg("exiting reconnection goroutine")
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case amqpError := <-q.connectionErr:
+		case amqpError := <-c.connectionErr:
 			if amqpError != nil {
-				q.log.Warn().Err(amqpError).Msg("connection closed, reconnecting")
-				if err := q.connect(); err != nil {
-					q.log.Error().Err(err).Msg("reconnect failed")
+				c.log.Warn().Err(amqpError).Msg("connection closed, reconnecting")
+				if err := c.connect(); err != nil {
+					c.log.Error().Err(err).Msg("reconnect failed")
 				}
-				q.reconnectWorkers(ctx)
+				c.reconnectWorkers(ctx)
 			}
 		}
 	}
 
 }
 
-func (q *Channel) contestualizeReconnector(ctx context.Context) {
-	q.log.Debug().Msg("recontestualizing reconnector")
-	q.cancelCtx()
+func (c *Client) contestualizeReconnector(ctx context.Context) {
+	c.log.Debug().Msg("recontestualizing reconnector")
+	c.cancelCtx()
 	ctx, cancel := context.WithCancel(ctx)
-	q.cancelCtx = cancel
-	go q.reconnector(ctx)
+	c.cancelCtx = cancel
+	go c.reconnector(ctx)
 }
 
 func logWorkerID(log *zerolog.Logger, id uint64) *zerolog.Logger {
@@ -262,30 +262,30 @@ func logWorkerID(log *zerolog.Logger, id uint64) *zerolog.Logger {
 	return &l
 }
 
-func (q *Channel) reconnectWorkers(ctx context.Context) {
-	for i := range q.workers {
-		var worker = q.workers[i]
-		logWorker := logWorkerID(q.log, q.workers[i].id)
+func (c *Client) reconnectWorkers(ctx context.Context) {
+	for i := range c.workers {
+		var worker = c.workers[i]
+		logWorker := logWorkerID(c.log, c.workers[i].id)
 		logWorker.Info().Msg("recovering worker")
-		if q.isConsumer {
-			if err := q.receiver(&worker, logWorker); err != nil {
-				logWorker.Error().Err(err).Msg("q.receiver(&worker)")
+		if c.isConsumer {
+			if err := c.receiver(&worker, logWorker); err != nil {
+				logWorker.Error().Err(err).Msg("c.receiver(&worker)")
 			}
 		} else {
-			go q.sender(ctx, &worker, logWorker)
+			go c.sender(ctx, &worker, logWorker)
 		}
 	}
 }
 
-func (q *Channel) receiver(w *worker, log *zerolog.Logger) error {
-	ch, err := q.getChannel()
+func (c *Client) receiver(w *worker, log *zerolog.Logger) error {
+	ch, err := c.getChannel()
 	if err != nil {
-		log.Error().Err(err).Msg("q.getChannel()")
+		log.Error().Err(err).Msg("c.getChannel()")
 		return err
 	}
 
 	err = ch.Qos(
-		q.prefetchSize, // prefetch count
+		c.prefetchSize, // prefetch count
 		0,              // prefetch size -- UNUSED
 		true,           // global
 	)
@@ -297,7 +297,7 @@ func (q *Channel) receiver(w *worker, log *zerolog.Logger) error {
 	w.channel = ch
 
 	msgs, err := w.channel.Consume(
-		q.name, // queue
+		c.name, // queue
 		"",     // consumer
 		false,  // auto-ack
 		false,  // exclusive
@@ -330,7 +330,7 @@ func logCorrelationID(log *zerolog.Logger, correlationID string) *zerolog.Logger
 
 // sender listens on the Delivery RabbitMQ channel and fetches jobs for the
 // given worker{}.
-func (q *Channel) sender(ctx context.Context, w *worker, log *zerolog.Logger) {
+func (c *Client) sender(ctx context.Context, w *worker, log *zerolog.Logger) {
 	log.Info().Msg("starting publisher")
 	started := false
 
@@ -341,14 +341,14 @@ MAIN:
 		}
 		started = true
 
-		if err := w.setupChannel(q); err != nil {
+		if err := w.setupChannel(c); err != nil {
 			time.Sleep(time.Second) // avoid a quick succession of reconnects
 			continue
 		}
 
 		// exit gracefully if this loop breaks
 		for {
-			m := q.receiveJob(ctx)
+			m := c.receiveJob(ctx)
 			if m == nil {
 				break // graceful exit
 			}
@@ -360,7 +360,7 @@ MAIN:
 
 			// There are multiple possible failure scenarios that
 			// result in either message Duplication or Loss.
-			if err := q.publish(publishing, w.channel); err != nil {
+			if err := c.publish(publishing, w.channel); err != nil {
 				// Destination RabbitMQ didn't accept our message
 				logMessage.Error().Err(err).Msg("publish fail")
 				if err := m.Nack(false, false); err != nil {
@@ -375,7 +375,7 @@ MAIN:
 				continue MAIN
 			}
 
-			confirmed := q.checkConfirmation(*m, w)
+			confirmed := c.checkConfirmation(*m, w)
 			if !confirmed {
 				// Destination RabbitMQ didn't confirm our
 				// message, but it accepted it earlier.
@@ -384,7 +384,7 @@ MAIN:
 				// XXX reconnect, but only if no Ack received (as opposed to negative ack)?
 			}
 
-			if err := q.ackNack(*m, confirmed); err != nil {
+			if err := c.ackNack(*m, confirmed); err != nil {
 				// Source RabbitMQ is unreachable
 				//
 				// If confirmed == false:
@@ -415,12 +415,12 @@ MAIN:
 // We're observing this when the server is restarted
 //
 // XXX what does the amqp library do when the server disappears without a trace?
-func (q *Channel) checkConfirmation(m amqp.Delivery, w *worker) bool {
+func (c *Client) checkConfirmation(m amqp.Delivery, w *worker) bool {
 	confirmed := <-w.confirms
 	return confirmed.Ack
 }
 
-func (q *Channel) ackNack(m amqp.Delivery, confirmed bool) error {
+func (c *Client) ackNack(m amqp.Delivery, confirmed bool) error {
 	if confirmed {
 		if err := m.Ack(false); err != nil {
 			return err
@@ -436,8 +436,8 @@ func (q *Channel) ackNack(m amqp.Delivery, confirmed bool) error {
 
 // AddReceiver start consuming messages on channel ch from the queue and
 // posts deliveries to the WorkerFunc
-func (q *Channel) AddReceiver(cf WorkerFunc) error {
-	if !q.isConsumer {
+func (c *Client) AddReceiver(cf WorkerFunc) error {
+	if !c.isConsumer {
 		panic("Adding a Consumer on a publishing Queue")
 	}
 
@@ -445,21 +445,21 @@ func (q *Channel) AddReceiver(cf WorkerFunc) error {
 
 	consumer := &worker{id: newConsumerWid, work: cf}
 
-	logWorker := logWorkerID(q.log, consumer.id)
+	logWorker := logWorkerID(c.log, consumer.id)
 	logWorker.Info().Msg("starting consumer")
-	if err := q.receiver(consumer, logWorker); err != nil {
+	if err := c.receiver(consumer, logWorker); err != nil {
 		return err
 	}
 
 	// add consumer to the list
-	q.workers = append(q.workers, *consumer)
+	c.workers = append(c.workers, *consumer)
 
 	return nil
 }
 
 // AddPublisher adds a publisher to the worker pool
-func (q *Channel) AddPublisher(ctx context.Context, pf WorkerFunc) error {
-	if q.isConsumer {
+func (c *Client) AddPublisher(ctx context.Context, pf WorkerFunc) error {
+	if c.isConsumer {
 		panic("Adding a Publisher on a consumer Queue")
 	}
 
@@ -467,49 +467,49 @@ func (q *Channel) AddPublisher(ctx context.Context, pf WorkerFunc) error {
 
 	publisher := &worker{id: newPublisherWid, work: pf}
 
-	if len(q.workers) == 0 {
-		q.contestualizeReconnector(ctx)
+	if len(c.workers) == 0 {
+		c.contestualizeReconnector(ctx)
 	}
 
-	q.workers = append(q.workers, *publisher)
+	c.workers = append(c.workers, *publisher)
 
-	logWorker := logWorkerID(q.log, publisher.id)
-	go q.sender(ctx, publisher, logWorker)
+	logWorker := logWorkerID(c.log, publisher.id)
+	go c.sender(ctx, publisher, logWorker)
 
 	return nil
 }
 
 // getChannel gets a channel from the Queue
-func (q *Channel) getChannel() (ch *amqp.Channel, err error) {
-	return q.connection.Channel()
+func (c *Client) getChannel() (ch *amqp.Channel, err error) {
+	return c.connection.Channel()
 }
 
 // setupConnection declares a Queue or Exchange connection
-func (q *Channel) setupConnection() error {
-	if q.name == "" {
+func (c *Client) setupConnection() error {
+	if c.name == "" {
 		err := errors.New("no queue or exchange name provided")
 		log.Error().Err(err).Send()
 		return err
 	}
 
 	var err error
-	if q.isExchange {
-		err = q.channel.ExchangeDeclarePassive(q.name, "fanout", true, false, false, false, nil)
+	if c.isExchange {
+		err = c.channel.ExchangeDeclarePassive(c.name, "fanout", true, false, false, false, nil)
 	} else {
-		_, err = q.channel.QueueDeclarePassive(q.name, q.Durable, false, false, false, nil)
+		_, err = c.channel.QueueDeclarePassive(c.name, c.Durable, false, false, false, nil)
 	}
 
 	if err != nil {
-		q.log.Error().Err(err).Msg("declare passive")
+		c.log.Error().Err(err).Msg("declare passive")
 	}
 
 	return err
 }
 
 // setConsumerQoS sets QoS on a channel with a prefetch value
-func (q *Channel) setConsumerQoS(prefetch int, global bool) error {
-	if q.channel != nil && q.name != "" {
-		return q.channel.Qos(
+func (c *Client) setConsumerQoS(prefetch int, global bool) error {
+	if c.channel != nil && c.name != "" {
+		return c.channel.Qos(
 			prefetch, // prefetch count
 			0,        // prefetch size
 			global,   // global
@@ -519,14 +519,14 @@ func (q *Channel) setConsumerQoS(prefetch int, global bool) error {
 }
 
 // publish sends a message on a channel if provided, otherwise get a new channel from the queue connection
-func (q *Channel) publish(message *amqp.Publishing, ch *amqp.Channel) error {
-	if q.isConsumer {
+func (c *Client) publish(message *amqp.Publishing, ch *amqp.Channel) error {
+	if c.isConsumer {
 		return errors.New("publishing on a consumer queue")
 	}
 
 	if ch == nil {
 		var err error
-		ch, err = q.getChannel()
+		ch, err = c.getChannel()
 		if err != nil {
 			return err
 		}
@@ -534,9 +534,9 @@ func (q *Channel) publish(message *amqp.Publishing, ch *amqp.Channel) error {
 
 	// If exchange is used to publish message
 	exchangeName := ""
-	queueName := q.name
-	if q.isExchange {
-		exchangeName = q.name
+	queueName := c.name
+	if c.isExchange {
+		exchangeName = c.name
 		// Since we are using fanout exchange, routing key can be ignored
 		queueName = ""
 	}
@@ -554,14 +554,14 @@ func (q *Channel) publish(message *amqp.Publishing, ch *amqp.Channel) error {
 
 // receiveJob returns a job from the .Jobs queue, blocking if necessary. If
 // execution is canceled in any way it returns nil.
-func (q *Channel) receiveJob(ctx context.Context) *amqp.Delivery {
+func (c *Client) receiveJob(ctx context.Context) *amqp.Delivery {
 	select {
 	case <-ctx.Done():
 		return nil
-	case <-q.connectionErr:
+	case <-c.connectionErr:
 		return nil
-	case job, ok := <-q.Jobs:
-		if !ok { // q.Jobs was closed
+	case job, ok := <-c.Jobs:
+		if !ok { // c.Jobs was closed
 			return nil
 		}
 		return &job
