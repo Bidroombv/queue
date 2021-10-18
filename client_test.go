@@ -355,6 +355,66 @@ func TestClientFastWithExchange(t *testing.T) {
 	CheckNumMessages(t, rabbitC, queueName, 0)
 }
 
+func assertIsHealthy(t *testing.T, client *Client, expected bool) bool {
+	const maxWaitTime = time.Second * 60
+	ctx, cancel := context.WithTimeout(context.Background(), maxWaitTime)
+	defer cancel()
+
+	for {
+		if client.IsHealthy() == expected {
+			return true
+		}
+		if ctx.Err() != nil {
+			return assert.Equal(t, expected, client.IsHealthy())
+		}
+		time.Sleep(time.Second)
+	}
+}
+func TestHealthCheck(t *testing.T) {
+	t.Parallel()
+	rabbitC, url := runRabbitContainer(t)
+	defer func() { require.NoError(t, rabbitC.Terminate(context.Background())) }()
+	const queueName = "queue"
+	const exchangeName = "exchange"
+	require.NoError(t, declareQueue(t, rabbitC, queueName))
+	require.NoError(t, declareExchange(t, rabbitC, exchangeName, "direct"))
+	require.NoError(t, declareBinding(t, rabbitC, exchangeName, queueName))
+
+	q, err := NewQueue(url, queueName, 1, true, false, nil)
+	assert.NoError(t, err)
+	defer q.Close()
+
+	jobOutChannel := make(chan amqp.Delivery)
+	ch, err := NewExchange(url, exchangeName, 1, true, jobOutChannel)
+	assert.NoError(t, err)
+	defer ch.Close()
+
+	t.Run("should be healthy after connection setup", func(t *testing.T) {
+		assertIsHealthy(t, q, true)
+		assertIsHealthy(t, ch, true)
+	})
+
+	for i := 0; i < 3; i++ {
+		t.Run(fmt.Sprintf("%d try", i), func(t *testing.T) {
+			t.Run("stop the container should be unhealthy", func(t *testing.T) {
+				_, err := exec.Command("docker", "stop", rabbitC.GetContainerID(), "-t", "60").CombinedOutput()
+				require.NoError(t, err)
+
+				assertIsHealthy(t, q, false)
+				assertIsHealthy(t, ch, false)
+			})
+
+			t.Run("start the container", func(t *testing.T) {
+				_, err := exec.Command("docker", "start", rabbitC.GetContainerID()).CombinedOutput()
+				require.NoError(t, err)
+
+				assertIsHealthy(t, q, true)
+				assertIsHealthy(t, ch, true)
+			})
+		})
+	}
+}
+
 const (
 	user     = "user"
 	password = "password"
