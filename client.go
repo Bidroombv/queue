@@ -90,8 +90,6 @@ type Client struct {
 	isConsumer bool
 	// isExchange specifies if this is queue or an exchange
 	isExchange bool
-	// Durable sets durability and persistence of the queue
-	Durable bool
 
 	// Jobs is the channel where messages are sent
 	Jobs chan amqp.Delivery
@@ -105,23 +103,67 @@ type Client struct {
 	healthCheck healthCheck
 }
 
-// NewQueue connects to the queue.
-func NewQueue(url *URL, name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Client, error) {
-	return newClient(url, name, prefetchSize, isConsumer, false, durable, jobs)
+type Builder struct {
+	name         string
+	url          *URL
+	isConsumer   bool
+	isExchange   bool
+	jobs         chan amqp.Delivery
+	prefetchSize int
 }
 
-// NewExchange connects to the exchange.
-func NewExchange(url *URL, name string, prefetchSize int, durable bool, jobs chan amqp.Delivery) (*Client, error) {
-	return newClient(url, name, prefetchSize, false, true, durable, jobs)
+func (b *Builder) Name(name string) *Builder {
+	b.name = name
+	return b
 }
 
-func newClient(url *URL, name string, prefetchSize int, isConsumer, isExchange, durable bool, jobs chan amqp.Delivery) (*Client, error) {
+func (b *Builder) URL(url *URL) *Builder {
+	b.url = url
+	return b
+}
+
+func (b *Builder) Consumer(prefetchSize int) *Builder {
+	b.isConsumer = true
+	b.prefetchSize = prefetchSize
+	return b
+}
+
+func (b *Builder) Producer() *Builder {
+	b.isConsumer = false
+	return b
+}
+
+func (b *Builder) Jobs(jobs chan amqp.Delivery) *Builder {
+	b.jobs = jobs
+	return b
+}
+
+func (b *Builder) Connect() (*Client, error) {
+	if b.name == "" {
+		return nil, errors.New("queue/exchange name is required")
+	}
+
+	if b.url == nil {
+		return nil, errors.New("url is required")
+	}
+
+	return newClient(b.url, b.name, b.prefetchSize, b.isConsumer, b.isExchange, b.jobs)
+}
+
+func NewQueue() *Builder {
+	return &Builder{isExchange: false}
+}
+
+func NewExchange() *Builder {
+	return &Builder{isExchange: true}
+}
+
+func newClient(url *URL, name string, prefetchSize int, isConsumer, isExchange bool, jobs chan amqp.Delivery) (*Client, error) {
 	c := &Client{
 		name:         name,
 		url:          url.urlString(),
 		isConsumer:   isConsumer,
 		isExchange:   isExchange,
-		Durable:      durable,
 		Jobs:         jobs,
 		log:          setupLogger(*url, isExchange, isConsumer, name),
 		prefetchSize: prefetchSize,
@@ -182,7 +224,6 @@ func (c *Client) Close() {
 func (c *Client) IsHealthy() bool {
 	return c.healthCheck.IsHealthy()
 }
-
 
 func (c *Client) connect() error {
 	c.log.Info().Msg("connecting")
@@ -509,7 +550,7 @@ func (c *Client) setupConnection() error {
 	if c.isExchange {
 		err = c.channel.ExchangeDeclarePassive(c.name, "fanout", true, false, false, false, nil)
 	} else {
-		_, err = c.channel.QueueDeclarePassive(c.name, c.Durable, false, false, false, nil)
+		_, err = c.channel.QueueDeclarePassive(c.name, false, false, false, false, nil)
 	}
 
 	if err != nil {
