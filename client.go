@@ -98,6 +98,8 @@ type Client struct {
 	prefetchSize int
 	workers      []worker
 
+	dial func(string) (*amqp.Connection, error)
+
 	log *zerolog.Logger
 
 	healthCheck healthCheck
@@ -110,6 +112,7 @@ type Builder struct {
 	isExchange   bool
 	jobs         chan amqp.Delivery
 	prefetchSize int
+	dial         func(string) (*amqp.Connection, error)
 }
 
 func (b *Builder) Name(name string) *Builder {
@@ -138,36 +141,32 @@ func (b *Builder) Jobs(jobs chan amqp.Delivery) *Builder {
 	return b
 }
 
+// WithCustomDial is useful in testing when you want to mock *amqp.Connection.
+func (b *Builder) WithCustomDial(dial func(string) (*amqp.Connection, error)) *Builder {
+	b.dial = dial
+	return b
+}
+
 func (b *Builder) Connect() (*Client, error) {
 	if b.name == "" {
 		return nil, errors.New("queue/exchange name is required")
 	}
-
 	if b.url == nil {
 		return nil, errors.New("url is required")
 	}
-
-	return newClient(b.url, b.name, b.prefetchSize, b.isConsumer, b.isExchange, b.jobs)
-}
-
-func NewQueue() *Builder {
-	return &Builder{isExchange: false}
-}
-
-func NewExchange() *Builder {
-	return &Builder{isExchange: true}
-}
-
-func newClient(url *URL, name string, prefetchSize int, isConsumer, isExchange bool, jobs chan amqp.Delivery) (*Client, error) {
+	if b.dial == nil {
+		b.dial = amqp.Dial
+	}
 	c := &Client{
-		name:         name,
-		url:          url.urlString(),
-		isConsumer:   isConsumer,
-		isExchange:   isExchange,
-		Jobs:         jobs,
-		log:          setupLogger(*url, isExchange, isConsumer, name),
-		prefetchSize: prefetchSize,
+		name:         b.name,
+		url:          b.url.urlString(),
+		isConsumer:   b.isConsumer,
+		isExchange:   b.isExchange,
+		Jobs:         b.jobs,
+		log:          setupLogger(*b.url, b.isExchange, b.isConsumer, b.name),
+		prefetchSize: b.prefetchSize,
 		workers:      make([]worker, 0),
+		dial:         b.dial,
 	}
 
 	if err := c.connect(); err != nil {
@@ -181,6 +180,14 @@ func newClient(url *URL, name string, prefetchSize int, isConsumer, isExchange b
 	go c.reconnector(ctx)
 
 	return c, nil
+}
+
+func NewQueue() *Builder {
+	return &Builder{isExchange: false}
+}
+
+func NewExchange() *Builder {
+	return &Builder{isExchange: true}
 }
 
 func setupLogger(url URL, isExchange bool, isConsumer bool, name string) *zerolog.Logger {
@@ -241,7 +248,7 @@ func (c *Client) connect() error {
 	}
 
 	var conn *amqp.Connection
-	conn, err := amqp.Dial(c.url)
+	conn, err := c.dial(c.url)
 	for err != nil {
 		// In addition to the errors returned by ParseURI we may
 		// attempt to connect to a non-existent host
@@ -251,7 +258,7 @@ func (c *Client) connect() error {
 		}
 
 		time.Sleep(500 * time.Millisecond)
-		conn, err = amqp.Dial(c.url)
+		conn, err = c.dial(c.url)
 	}
 
 	c.connection = conn
