@@ -101,6 +101,8 @@ type Client struct {
 	workers      []worker
 
 	log *zerolog.Logger
+
+	healthCheck healthCheck
 }
 
 // NewQueue connects to the queue.
@@ -176,6 +178,12 @@ func (c *Client) Close() {
 	c.connection.Close()
 }
 
+// IsHealthy return true, if Client works as expected.
+func (c *Client) IsHealthy() bool {
+	return c.healthCheck.IsHealthy()
+}
+
+
 func (c *Client) connect() error {
 	c.log.Info().Msg("connecting")
 
@@ -226,7 +234,11 @@ func (c *Client) connect() error {
 		}
 	}
 
-	return c.setupConnection()
+	err = c.setupConnection()
+	if err == nil {
+		c.healthCheck.SetHealthy()
+	}
+	return err
 }
 
 func (c *Client) reconnector(ctx context.Context) {
@@ -238,6 +250,7 @@ func (c *Client) reconnector(ctx context.Context) {
 			return
 		case amqpError := <-c.connectionErr:
 			if amqpError != nil {
+				c.healthCheck.SetUnhealthy()
 				c.log.Warn().Err(amqpError).Msg("connection closed, reconnecting")
 				if err := c.connect(); err != nil {
 					c.log.Error().Err(err).Msg("reconnect failed")
