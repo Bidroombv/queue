@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -314,9 +315,8 @@ func (c *Client) receiver(w *worker, log *zerolog.Logger) error {
 	go func() {
 		for m := range msgs {
 			logMessage := logCorrelationID(log, m.CorrelationId)
-			logMessage.Info().Msg("started job")
+			logMessage.Info().Func(logDelivery(&m)).Msg("consuming job")
 			w.work(m)
-			logMessage.Info().Msg("finished job")
 		}
 	}()
 
@@ -326,6 +326,23 @@ func (c *Client) receiver(w *worker, log *zerolog.Logger) error {
 func logCorrelationID(log *zerolog.Logger, correlationID string) *zerolog.Logger {
 	l := log.With().Str("correlation_id", correlationID).Logger()
 	return &l
+}
+
+func logDelivery(m *amqp.Delivery) func(*zerolog.Event) {
+	return func(e *zerolog.Event) {
+		e = e.Str("contentType", m.ContentType).Str("type", m.Type).Int("bodySize", len(m.Body))
+
+		if m.ContentType == "application/json" {
+			var asJSON interface{}
+			err := json.Unmarshal(m.Body, &asJSON)
+			if err == nil {
+				e.Interface("body", asJSON)
+				return
+			}
+		}
+
+		e.Interface("body", m.Body)
+	}
 }
 
 // sender listens on the Delivery RabbitMQ channel and fetches jobs for the
@@ -354,7 +371,7 @@ MAIN:
 			}
 
 			logMessage := logCorrelationID(log, m.CorrelationId)
-			logMessage.Info().Msg("started job")
+			logMessage.Info().Func(logDelivery(m)).Msg("publishing message")
 
 			publishing := w.work(*m)
 
@@ -398,7 +415,7 @@ MAIN:
 				}
 			}
 
-			logMessage.Info().Msg("finished job")
+			logMessage.Info().Msg("message published")
 		}
 
 		break // graceful exit
