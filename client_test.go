@@ -100,13 +100,19 @@ func TestClientSingle(t *testing.T) {
 			ContentType:   d.ContentType,
 			CorrelationId: d.CorrelationId,
 			Body:          d.Body,
+			Type:          d.Type,
 			Headers:       d.Headers,
 		}
 	}
 	assert.NoError(t, qo.AddPublisher(context.TODO(), pub))
 
 	t.Run("Send", func(t *testing.T) {
-		jobChannel2 <- amqp.Delivery{CorrelationId: correlationId}
+		jobChannel2 <- amqp.Delivery{
+			CorrelationId: correlationId,
+			Body:          []byte(`{"a": 4}`),
+			Type:          "some message type",
+			ContentType:   "application/json",
+		}
 
 		<-received
 	})
