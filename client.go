@@ -76,6 +76,9 @@ func (w *worker) stop() {
 
 // Client is a wrapper around *amqp.Connection which allow interaction with one queue/exchange.
 type Client struct {
+	// LogMessagesMaxSize indicate max size in bytes of messages, which are logged.
+	LogMessagesMaxSize int
+
 	// Name of the queue/exchange
 	name string
 	// complete URL of the queue (i.e "amqp://guest:guest@localhost:5672/")
@@ -109,11 +112,11 @@ func NewQueueConsumer(url *URL, name string, prefetchSize int) (*Client, error) 
 }
 
 func NewQueuePublisher(url *URL, name string, jobs chan amqp.Delivery) (*Client, error) {
-	return newClient(url, name,0 , false, false,  jobs)
+	return newClient(url, name, 0, false, false, jobs)
 }
 
 func NewExchangePublisher(url *URL, name string, jobs chan amqp.Delivery) (*Client, error) {
-	return newClient(url, name,0 , false, true,  jobs)
+	return newClient(url, name, 0, false, true, jobs)
 }
 
 func newClient(url *URL, name string, prefetchSize int, isConsumer, isExchange bool, jobs chan amqp.Delivery) (*Client, error) {
@@ -326,7 +329,7 @@ func (c *Client) receiver(w *worker, log *zerolog.Logger) error {
 	go func() {
 		for m := range msgs {
 			logMessage := logCorrelationID(log, m.CorrelationId)
-			logMessage.Info().Func(logDelivery(&m)).Msg("consuming job")
+			logMessage.Info().Func(logDelivery(&m, c.LogMessagesMaxSize)).Msg("consuming job")
 			w.work(m)
 		}
 	}()
@@ -339,20 +342,23 @@ func logCorrelationID(log *zerolog.Logger, correlationID string) *zerolog.Logger
 	return &l
 }
 
-func logDelivery(m *amqp.Delivery) func(*zerolog.Event) {
+func logDelivery(m *amqp.Delivery, maxMessageSize int) func(*zerolog.Event) {
 	return func(e *zerolog.Event) {
+		bodySize := len(m.Body)
 		e = e.Str("contentType", m.ContentType).Str("type", m.Type).Int("bodySize", len(m.Body))
 
-		if m.ContentType == "application/json" {
-			var asJSON interface{}
-			err := json.Unmarshal(m.Body, &asJSON)
-			if err == nil {
-				e.Interface("body", asJSON)
-				return
+		if bodySize <= maxMessageSize {
+			if m.ContentType == "application/json" {
+				var asJSON interface{}
+				err := json.Unmarshal(m.Body, &asJSON)
+				if err == nil {
+					e.Interface("body", asJSON)
+					return
+				}
 			}
-		}
 
-		e.Interface("body", m.Body)
+			e.Interface("body", m.Body)
+		}
 	}
 }
 
@@ -382,7 +388,7 @@ MAIN:
 			}
 
 			logMessage := logCorrelationID(log, m.CorrelationId)
-			logMessage.Info().Func(logDelivery(m)).Msg("publishing message")
+			logMessage.Info().Func(logDelivery(m, c.LogMessagesMaxSize)).Msg("publishing message")
 
 			publishing := w.work(*m)
 
