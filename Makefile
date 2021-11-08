@@ -8,11 +8,11 @@ lint:
 
 .PHONY: test
 test:
-	go test -v ./...
+	go test ./...
 
 .PHONY: test-race
 test-race:
-	go test -v -race ./...
+	go test -race ./...
 
 .PHONY: update
 update:
