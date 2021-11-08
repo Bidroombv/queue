@@ -91,11 +91,9 @@ type Client struct {
 	isConsumer bool
 	// isExchange specifies if this is queue or an exchange
 	isExchange bool
-	// Durable sets durability and persistence of the queue
-	Durable bool
 
-	// Jobs is the channel where messages are sent
-	Jobs chan amqp.Delivery
+	// jobs is the channel where messages are sent
+	jobs chan amqp.Delivery
 
 	cancelCtx    context.CancelFunc
 	prefetchSize int
@@ -106,24 +104,25 @@ type Client struct {
 	healthCheck healthCheck
 }
 
-// NewQueue connects to the queue.
-func NewQueue(url *URL, name string, prefetchSize int, isConsumer, durable bool, jobs chan amqp.Delivery) (*Client, error) {
-	return newClient(url, name, prefetchSize, isConsumer, false, durable, jobs)
+func NewQueueConsumer(url *URL, name string, prefetchSize int) (*Client, error) {
+	return newClient(url, name, prefetchSize, true, false, nil)
 }
 
-// NewExchange connects to the exchange.
-func NewExchange(url *URL, name string, prefetchSize int, durable bool, jobs chan amqp.Delivery) (*Client, error) {
-	return newClient(url, name, prefetchSize, false, true, durable, jobs)
+func NewQueuePublisher(url *URL, name string, jobs chan amqp.Delivery) (*Client, error) {
+	return newClient(url, name,0 , false, false,  jobs)
 }
 
-func newClient(url *URL, name string, prefetchSize int, isConsumer, isExchange, durable bool, jobs chan amqp.Delivery) (*Client, error) {
+func NewExchangePublisher(url *URL, name string, jobs chan amqp.Delivery) (*Client, error) {
+	return newClient(url, name,0 , false, true,  jobs)
+}
+
+func newClient(url *URL, name string, prefetchSize int, isConsumer, isExchange bool, jobs chan amqp.Delivery) (*Client, error) {
 	c := &Client{
 		name:         name,
 		url:          url.urlString(),
 		isConsumer:   isConsumer,
 		isExchange:   isExchange,
-		Durable:      durable,
-		Jobs:         jobs,
+		jobs:         jobs,
 		log:          setupLogger(*url, isExchange, isConsumer, name),
 		prefetchSize: prefetchSize,
 		workers:      make([]worker, 0),
@@ -183,7 +182,6 @@ func (c *Client) Close() {
 func (c *Client) IsHealthy() bool {
 	return c.healthCheck.IsHealthy()
 }
-
 
 func (c *Client) connect() error {
 	c.log.Info().Msg("connecting")
@@ -526,7 +524,7 @@ func (c *Client) setupConnection() error {
 	if c.isExchange {
 		err = c.channel.ExchangeDeclarePassive(c.name, "fanout", true, false, false, false, nil)
 	} else {
-		_, err = c.channel.QueueDeclarePassive(c.name, c.Durable, false, false, false, nil)
+		_, err = c.channel.QueueDeclarePassive(c.name, true, false, false, false, nil)
 	}
 
 	if err != nil {
@@ -582,7 +580,7 @@ func (c *Client) publish(message *amqp.Publishing, ch *amqp.Channel) error {
 	return puberr
 }
 
-// receiveJob returns a job from the .Jobs queue, blocking if necessary. If
+// receiveJob returns a job from the .jobs queue, blocking if necessary. If
 // execution is canceled in any way it returns nil.
 func (c *Client) receiveJob(ctx context.Context) *amqp.Delivery {
 	select {
@@ -590,8 +588,8 @@ func (c *Client) receiveJob(ctx context.Context) *amqp.Delivery {
 		return nil
 	case <-c.connectionErr:
 		return nil
-	case job, ok := <-c.Jobs:
-		if !ok { // c.Jobs was closed
+	case job, ok := <-c.jobs:
+		if !ok { // c.jobs was closed
 			return nil
 		}
 		return &job

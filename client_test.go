@@ -28,8 +28,7 @@ func TestClientStop(t *testing.T) {
 	t.Run("Close Consumer", func(t *testing.T) {
 		queueName := t.Name()
 		require.NoError(t, declareQueue(t, rabbitC, queueName))
-		jobChannel := make(chan amqp.Delivery)
-		q, err := NewQueue(url, queueName, 3, true, false, jobChannel)
+		q, err := NewQueueConsumer(url, queueName, 3)
 		require.NoError(t, err)
 
 		rec := func(m amqp.Delivery) *amqp.Publishing {
@@ -49,7 +48,7 @@ func TestClientStop(t *testing.T) {
 		queueName := t.Name()
 		require.NoError(t, declareQueue(t, rabbitC, queueName))
 		jobChannel := make(chan amqp.Delivery)
-		q, err := NewQueue(url, queueName, 1, false, false, jobChannel)
+		q, err := NewQueuePublisher(url, queueName, jobChannel)
 		require.NoError(t, err)
 		pub := func(d amqp.Delivery) *amqp.Publishing {
 			return nil
@@ -78,8 +77,7 @@ func TestClientSingle(t *testing.T) {
 	received := make(chan bool) // this channel gets "released" on success
 
 	// Consumer
-	jobChannel := make(chan amqp.Delivery)
-	qi, err := NewQueue(url, queueName, 1, true, false, jobChannel)
+	qi, err := NewQueueConsumer(url, queueName, 1)
 	assert.NoError(t, err)
 	defer qi.Close()
 
@@ -92,7 +90,7 @@ func TestClientSingle(t *testing.T) {
 	assert.NoError(t, qi.AddReceiver(rec))
 
 	jobChannel2 := make(chan amqp.Delivery)
-	qo, err := NewQueue(url, queueName, 1, false, false, jobChannel2)
+	qo, err := NewQueuePublisher(url, queueName, jobChannel2)
 	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
@@ -141,8 +139,7 @@ func TestClientReconnect(t *testing.T) {
 	var noReject uint64
 
 	// Consumer
-	jobChannel := make(chan amqp.Delivery, num)
-	qi, err := NewQueue(url, queueName, 1, true, true, jobChannel)
+	qi, err := NewQueueConsumer(url, queueName, 1)
 	assert.NoError(t, err)
 	defer qi.Close()
 
@@ -154,7 +151,7 @@ func TestClientReconnect(t *testing.T) {
 	assert.NoError(t, qi.AddReceiver(rec))
 
 	jobChannel2 := make(chan amqp.Delivery, num)
-	qo, err := NewQueue(url, queueName, 1, false, true, jobChannel2)
+	qo, err := NewQueuePublisher(url, queueName, jobChannel2)
 	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
@@ -259,7 +256,7 @@ func TestClientFast(t *testing.T) {
 	num := 100
 	received := make(chan bool, num) // this channel gets "released" on message delivery
 	// Consumer
-	qi, err := NewQueue(url, queueName, 1, true, false, nil)
+	qi, err := NewQueueConsumer(url, queueName, 1)
 	require.NoError(t, err)
 	defer qi.Close()
 
@@ -272,7 +269,7 @@ func TestClientFast(t *testing.T) {
 
 	// Publisher
 	jobOutChannel := make(chan amqp.Delivery)
-	qo, err := NewQueue(url, queueName, 1, false, false, jobOutChannel)
+	qo, err := NewQueuePublisher(url, queueName, jobOutChannel)
 	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
@@ -315,12 +312,11 @@ func TestClientFastWithExchange(t *testing.T) {
 	require.NoError(t, declareBinding(t, rabbitC, exchangeName, queueName))
 
 	num := 30
-	received := make(chan bool, num) // this channel gets "released" on message delivery
-	// Consumer
-	qi, err := NewQueue(url, queueName, 1, true, false, nil)
+	qi, err := NewQueueConsumer(url, queueName, 1)
 	assert.NoError(t, err)
 	defer qi.Close()
 
+	received := make(chan bool, num)
 	rec := func(m amqp.Delivery) *amqp.Publishing {
 		assert.NoError(t, m.Ack(false))
 		received <- true
@@ -330,7 +326,7 @@ func TestClientFastWithExchange(t *testing.T) {
 
 	// Publisher
 	jobOutChannel := make(chan amqp.Delivery)
-	qo, err := NewExchange(url, exchangeName, 1, true, jobOutChannel)
+	qo, err := NewExchangePublisher(url, exchangeName, jobOutChannel)
 	assert.NoError(t, err)
 	defer qo.Close()
 	pub := func(d amqp.Delivery) *amqp.Publishing {
@@ -386,12 +382,12 @@ func TestHealthCheck(t *testing.T) {
 	require.NoError(t, declareExchange(t, rabbitC, exchangeName, "direct"))
 	require.NoError(t, declareBinding(t, rabbitC, exchangeName, queueName))
 
-	q, err := NewQueue(url, queueName, 1, true, false, nil)
+	q, err := NewQueueConsumer(url, queueName, 1)
 	assert.NoError(t, err)
 	defer q.Close()
 
 	jobOutChannel := make(chan amqp.Delivery)
-	ch, err := NewExchange(url, exchangeName, 1, true, jobOutChannel)
+	ch, err := NewExchangePublisher(url, exchangeName, jobOutChannel)
 	assert.NoError(t, err)
 	defer ch.Close()
 
