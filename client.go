@@ -4,111 +4,44 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"strings"
-	"sync/atomic"
+	"github.com/furdarius/rabbitroutine"
 	"time"
 
-	"github.com/Netflix/go-env"
 	"github.com/streadway/amqp"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
-var (
-	consumerWid  uint64 = 0
-	publisherWid uint64 = 0
-)
-
 // WorkerFunc does all the work necessary on a Delivery message
 type WorkerFunc func(amqp.Delivery) *amqp.Publishing
-
-// worker defines consumer workers on Delivery messages
-type worker struct {
-	id       uint64
-	channel  *amqp.Channel
-	work     WorkerFunc
-	confirms chan amqp.Confirmation
-}
-
-type URL struct {
-	HostName string `env:"RABBITMQ_HOSTNAME,required=true"`
-	Port     string `env:"RABBITMQ_PORT,required=true"`
-	UserName string `env:"RABBITMQ_USERNAME,required=true"`
-	Password string `env:"RABBITMQ_PASSWORD,required=true"`
-	Vhost    string `env:"RABBITMQ_VHOST,required=true"`
-}
-
-func (url *URL) urlString() string {
-	return fmt.Sprintf("amqp://%s:%s@%s:%s%s", url.UserName, url.Password, url.HostName, url.Port, url.Vhost)
-}
-
-// setupChannel sets up a *amqp.Channel for a worker{}. It closes a
-// previously opened channel, if any.
-func (w *worker) setupChannel(q *Client) error {
-	if w.channel != nil {
-		w.channel.Close() // It is safe to call this method multiple times.
-	}
-
-	ch, err := q.getChannel()
-	if err != nil {
-		return fmt.Errorf("failed to get channel for publisher on %s. Error: %s", q.name, err)
-	}
-	w.channel = ch
-
-	// this channel is going to be closed when the Queue Client is closed
-	confirms := make(chan amqp.Confirmation, 1)
-
-	w.confirms = w.channel.NotifyPublish(confirms)
-	if err := w.channel.Confirm(false); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (w *worker) stop() {
-	if w.confirms != nil {
-		close(w.confirms)
-	}
-}
 
 // Client is a wrapper around *amqp.Connection which allow interaction with one queue/exchange.
 type Client struct {
 	// LogMessagesMaxSize indicate max size in bytes of messages, which are logged.
 	LogMessagesMaxSize int
 
-	// Name of the queue/exchange
-	name string
-	// complete URL of the queue (i.e "amqp://guest:guest@localhost:5672/")
-	url string
-	// Connection to the server
-	connection *amqp.Connection
-
-	channel *amqp.Channel
-
-	// ConnectionErr receives errors from the Connection in case of disconnection
-	connectionErr chan *amqp.Error
-	// consumer specifies if this queue is for consuming messages or for publishing
+	name       string
 	isConsumer bool
-	// isExchange specifies if this is queue or an exchange
 	isExchange bool
 
-	// jobs is the channel where messages are sent
 	jobs chan amqp.Delivery
 
-	cancelCtx    context.CancelFunc
-	prefetchSize int
-	workers      []worker
+	ctx           context.Context
+	cancel        context.CancelFunc
+	prefetchCount int
 
 	log *zerolog.Logger
 
-	healthCheck healthCheck
+	conn *rabbitroutine.Connector
+
+	isHealthy atomicBool
+	// Only for publisher
+	pool *rabbitroutine.Pool
 }
 
-func NewQueueConsumer(url *URL, name string, prefetchSize int) (*Client, error) {
-	return newClient(url, name, prefetchSize, true, false, nil)
+func NewQueueConsumer(url *URL, name string, prefetchCount int) (*Client, error) {
+	return newClient(url, name, prefetchCount, true, false, nil)
 }
 
 func NewQueuePublisher(url *URL, name string, jobs chan amqp.Delivery) (*Client, error) {
@@ -119,32 +52,63 @@ func NewExchangePublisher(url *URL, name string, jobs chan amqp.Delivery) (*Clie
 	return newClient(url, name, 0, false, true, jobs)
 }
 
-func newClient(url *URL, name string, prefetchSize int, isConsumer, isExchange bool, jobs chan amqp.Delivery) (*Client, error) {
+func newClient(url *URL, name string, prefetchCount int, isConsumer, isExchange bool, jobs chan amqp.Delivery) (*Client, error) {
+	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{
-		name:         name,
-		url:          url.urlString(),
-		isConsumer:   isConsumer,
-		isExchange:   isExchange,
-		jobs:         jobs,
-		log:          setupLogger(*url, isExchange, isConsumer, name),
-		prefetchSize: prefetchSize,
-		workers:      make([]worker, 0),
+		name:       name,
+		isConsumer: isConsumer,
+		isExchange: isExchange,
+		ctx:        ctx,
+		cancel:     cancel,
+		log:        setupLogger(isExchange, isConsumer, name),
+		jobs:       jobs,
 	}
+	c.conn = rabbitroutine.NewConnector(rabbitroutine.Config{
+		ReconnectAttempts: 0,
+		Wait:              1 * time.Second,
+	})
 
-	if err := c.connect(); err != nil {
-		return nil, err
-	}
+	c.conn.AddRetriedListener(func(r rabbitroutine.Retried) {
+		c.isHealthy.SetFalse()
+		c.log.Error().Str("url", url.URLStringWithoutSecrets()).Uint("attempt", r.ReconnectAttempt).Err(r.Error).Msg("retry failed")
+	})
 
-	ctx, cancel := context.WithCancel(context.TODO())
+	c.conn.AddDialedListener(func(_ rabbitroutine.Dialed) {
+		c.isHealthy.SetTrue()
+		c.log.Info().Str("url", url.URLStringWithoutSecrets()).Msg("successfully dialed")
+	})
 
-	c.cancelCtx = cancel
+	c.conn.AddAMQPNotifiedListener(func(n rabbitroutine.AMQPNotified) {
+		c.log.Error().Interface("amqpError", n.Error).Msg("AMQP error received")
+	})
 
-	go c.reconnector(ctx)
+	c.pool = rabbitroutine.NewPool(c.conn)
+
+	go func() {
+		err := c.conn.Dial(ctx, url.URLString())
+		if err != nil {
+			c.log.Error().Err(err).Send()
+		}
+	}()
 
 	return c, nil
 }
 
-func setupLogger(url URL, isExchange bool, isConsumer bool, name string) *zerolog.Logger {
+// Close closes everything.
+func (c *Client) Close() {
+	c.log.Info().Msg("closing connection")
+	if c.jobs != nil {
+		close(c.jobs)
+	}
+	c.cancel()
+}
+
+// IsHealthy return true, if connection is established and Client work properly.
+func (c *Client) IsHealthy() bool {
+	return c.isHealthy.Value()
+}
+
+func setupLogger(isExchange bool, isConsumer bool, name string) *zerolog.Logger {
 	var kind string
 	if isExchange {
 		kind = "exchange"
@@ -160,181 +124,7 @@ func setupLogger(url URL, isExchange bool, isConsumer bool, name string) *zerolo
 	}
 
 	l := log.Logger.With().Str(kind, name).Str("mode", mode).Logger()
-
-	url.UserName = "***"
-	url.Password = "***"
-	l.Info().Str("url", url.urlString()).Msg("amqp url")
-
 	return &l
-}
-
-// Close closes everything.
-func (c *Client) Close() {
-	c.log.Info().Msg("closing connection")
-	c.cancelCtx()
-
-	for _, w := range c.workers {
-		w.stop()
-	}
-	c.workers = nil
-	c.channel.Close()
-	c.connection.Close()
-}
-
-// IsHealthy return true, if Client works as expected.
-func (c *Client) IsHealthy() bool {
-	return c.healthCheck.IsHealthy()
-}
-
-func (c *Client) connect() error {
-	c.log.Info().Msg("connecting")
-
-	// We want to retry amqp.Dial if it fails, but only if it's reasonable
-	// to do so.
-	// - It's reasonable if the connection was refused (RabbitMQ has not
-	//   yet started when our app is starting), or if the connection is
-	//   reset (network problem, RabbitMQ restart).
-	// - It's unreasonable if the url is invalid (ParseURI() fails).
-	// We have no easy way to differentiate between these two error
-	// conditions, so as a workaround let's see if ParseURI() succeeds here.
-	if _, err := amqp.ParseURI(c.url); err != nil {
-		return err
-	}
-
-	var conn *amqp.Connection
-	conn, err := amqp.Dial(c.url)
-	for err != nil {
-		// In addition to the errors returned by ParseURI we may
-		// attempt to connect to a non-existent host
-		c.log.Error().Err(err).Msg("failed to dial")
-		if strings.Contains(err.Error(), ": no such host") {
-			return err
-		}
-
-		time.Sleep(500 * time.Millisecond)
-		conn, err = amqp.Dial(c.url)
-	}
-
-	c.connection = conn
-
-	// this channel will be closed when Queue Client is closed
-	c.connectionErr = c.connection.NotifyClose(make(chan *amqp.Error))
-
-	c.log.Info().Msg("connection established")
-
-	ch, err := c.getChannel()
-	if err != nil {
-		return err
-	}
-
-	c.channel = ch
-
-	if c.isConsumer {
-		if err := c.setConsumerQoS(c.prefetchSize, true); err != nil {
-			c.log.Error().Err(err).Msg("setConsumerQoS()")
-			// XXX error not really handled
-		}
-	}
-
-	err = c.setupConnection()
-	if err == nil {
-		c.healthCheck.SetHealthy()
-	}
-	return err
-}
-
-func (c *Client) reconnector(ctx context.Context) {
-	defer c.log.Debug().Msg("exiting reconnection goroutine")
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case amqpError := <-c.connectionErr:
-			if amqpError != nil {
-				c.healthCheck.SetUnhealthy()
-				c.log.Warn().Err(amqpError).Msg("connection closed, reconnecting")
-				if err := c.connect(); err != nil {
-					c.log.Error().Err(err).Msg("reconnect failed")
-				}
-				c.reconnectWorkers(ctx)
-			}
-		}
-	}
-
-}
-
-func (c *Client) contestualizeReconnector(ctx context.Context) {
-	c.log.Debug().Msg("recontestualizing reconnector")
-	c.cancelCtx()
-	ctx, cancel := context.WithCancel(ctx)
-	c.cancelCtx = cancel
-	go c.reconnector(ctx)
-}
-
-func logWorkerID(log *zerolog.Logger, id uint64) *zerolog.Logger {
-	l := log.With().Uint64("worker", id).Logger()
-	return &l
-}
-
-func (c *Client) reconnectWorkers(ctx context.Context) {
-	for i := range c.workers {
-		var worker = c.workers[i]
-		logWorker := logWorkerID(c.log, c.workers[i].id)
-		logWorker.Info().Msg("recovering worker")
-		if c.isConsumer {
-			if err := c.receiver(&worker, logWorker); err != nil {
-				logWorker.Error().Err(err).Msg("c.receiver(&worker)")
-			}
-		} else {
-			go c.sender(ctx, &worker, logWorker)
-		}
-	}
-}
-
-func (c *Client) receiver(w *worker, log *zerolog.Logger) error {
-	ch, err := c.getChannel()
-	if err != nil {
-		log.Error().Err(err).Msg("c.getChannel()")
-		return err
-	}
-
-	err = ch.Qos(
-		c.prefetchSize, // prefetch count
-		0,              // prefetch size -- UNUSED
-		true,           // global
-	)
-
-	if err != nil {
-		log.Error().Err(err).Msg("ch.Qox()")
-		// this is non blocking error
-	}
-	w.channel = ch
-
-	msgs, err := w.channel.Consume(
-		c.name, // queue
-		"",     // consumer
-		false,  // auto-ack
-		false,  // exclusive
-		false,  // no-local
-		false,  // no-wait
-		nil,    // args
-	)
-	if err != nil {
-		log.Error().Err(err).Msg("register error")
-		return err
-	}
-
-	// listen on the Delivery channel and distribute jobs to workers
-	go func() {
-		for m := range msgs {
-			logMessage := logCorrelationID(log, m.CorrelationId)
-			logMessage.Info().Func(logDelivery(&m, c.LogMessagesMaxSize)).Msg("consuming job")
-			w.work(m)
-		}
-	}()
-
-	return nil
 }
 
 func logCorrelationID(log *zerolog.Logger, correlationID string) *zerolog.Logger {
@@ -362,251 +152,115 @@ func logDelivery(m *amqp.Delivery, maxMessageSize int) func(*zerolog.Event) {
 	}
 }
 
-// sender listens on the Delivery RabbitMQ channel and fetches jobs for the
-// given worker{}.
-func (c *Client) sender(ctx context.Context, w *worker, log *zerolog.Logger) {
-	log.Info().Msg("starting publisher")
-	started := false
-
-MAIN:
-	for {
-		if started {
-			log.Info().Msg("restarting publisher")
-		}
-		started = true
-
-		if err := w.setupChannel(c); err != nil {
-			time.Sleep(time.Second) // avoid a quick succession of reconnects
-			continue
-		}
-
-		// exit gracefully if this loop breaks
-		for {
-			m := c.receiveJob(ctx)
-			if m == nil {
-				break // graceful exit
-			}
-
-			logMessage := logCorrelationID(log, m.CorrelationId)
-			logMessage.Info().Func(logDelivery(m, c.LogMessagesMaxSize)).Msg("publishing message")
-
-			publishing := w.work(*m)
-
-			// There are multiple possible failure scenarios that
-			// result in either message Duplication or Loss.
-			if err := c.publish(publishing, w.channel); err != nil {
-				// Destination RabbitMQ didn't accept our message
-				logMessage.Error().Err(err).Msg("publish fail")
-				if err := m.Nack(false, false); err != nil {
-					// Source RabbitMQ didn't receive our Nack
-					//
-					// If it crashed the message will be lost
-					// If it's lagging the message will be retried
-					logMessage.Error().Err(err).Msg("sender Nack()")
-				}
-
-				// Reconnect
-				continue MAIN
-			}
-
-			confirmed := c.checkConfirmation(*m, w)
-			if !confirmed {
-				// Destination RabbitMQ didn't confirm our
-				// message, but it accepted it earlier.
-				logMessage.Error().Msg("check confirmation")
-
-				// XXX reconnect, but only if no Ack received (as opposed to negative ack)?
-			}
-
-			if err := c.ackNack(*m, confirmed); err != nil {
-				// Source RabbitMQ is unreachable
-				//
-				// If confirmed == false:
-				//   If Source RabbitMQ crashed the message will be dropped
-				//   If it's just lagging the message will be re-delivered
-				// If confirmed == true:
-				//   If Source RabbitMQ crashed it's OK
-				//   If it's just lagging the message will be duplicated
-				if err.Error() != "delivery not initialized" {
-					logMessage.Error().Err(err).Msg("Ack/Nack")
-				}
-			}
-
-			logMessage.Info().Msg("message published")
-		}
-
-		break // graceful exit
-	}
-
-	log.Info().Msg("stopping publisher")
-	w.channel.Close()
+type consumer struct {
+	logMessagesMaxSize int
+	queueName          string
+	log                *zerolog.Logger
+	prefetchCount      int
+	workerFunc         WorkerFunc
 }
 
-// https://www.rabbitmq.com/confirms.html#publisher-confirms:
-//     basic.nack will only be delivered if an internal error occurs in the
-//     Erlang process responsible for a queue.
-//
-// We're observing this when the server is restarted
-//
-// XXX what does the amqp library do when the server disappears without a trace?
-func (c *Client) checkConfirmation(m amqp.Delivery, w *worker) bool {
-	confirmed := <-w.confirms
-	return confirmed.Ack
-}
-
-func (c *Client) ackNack(m amqp.Delivery, confirmed bool) error {
-	if confirmed {
-		if err := m.Ack(false); err != nil {
-			return err
-		}
-	} else {
-		if err := m.Nack(false, false); err != nil {
-			return err
-		}
-	}
-
+func (c *consumer) Declare(ctx context.Context, ch *amqp.Channel) error {
 	return nil
 }
 
-// AddReceiver start consuming messages on channel ch from the queue and
-// posts deliveries to the WorkerFunc
-func (c *Client) AddReceiver(cf WorkerFunc) error {
-	if !c.isConsumer {
-		panic("Adding a Consumer on a publishing Queue")
-	}
-
-	newConsumerWid := atomic.AddUint64(&consumerWid, 1)
-
-	consumer := &worker{id: newConsumerWid, work: cf}
-
-	logWorker := logWorkerID(c.log, consumer.id)
-	logWorker.Info().Msg("starting consumer")
-	if err := c.receiver(consumer, logWorker); err != nil {
+func (c *consumer) Consume(ctx context.Context, ch *amqp.Channel) error {
+	err := ch.Qos(c.prefetchCount, 0, false)
+	if err != nil {
+		c.log.Warn().Err(err).Msg("failed to set qos")
 		return err
 	}
 
-	// add consumer to the list
-	c.workers = append(c.workers, *consumer)
+	msgs, err := ch.Consume(
+		c.queueName, // queue
+		"",          // consumer queueName
+		false,       // auto-ack
+		false,       // exclusive
+		false,       // no-local
+		false,       // no-wait
+		nil,         // args
+	)
+	if err != nil {
+		c.log.Warn().Err(err).Msg("failed to consume")
+		return err
+	}
 
+	for {
+		select {
+		case msg, ok := <-msgs:
+			if !ok {
+				return amqp.ErrClosed
+			}
+
+			logMessage := logCorrelationID(c.log, msg.CorrelationId)
+			logMessage.Info().Func(logDelivery(&msg, c.logMessagesMaxSize)).Msg("consuming message")
+			c.workerFunc(msg)
+
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func (c *Client) AddReceiver(cf WorkerFunc) error {
+	if !c.isConsumer {
+		panic(errors.New("can not add consumer to publisher"))
+	}
+
+	go func() {
+		_ = c.conn.StartConsumer(c.ctx, &consumer{
+			queueName:          c.name,
+			log:                c.log,
+			prefetchCount:      c.prefetchCount,
+			workerFunc:         cf,
+			logMessagesMaxSize: c.LogMessagesMaxSize},
+		)
+	}()
 	return nil
 }
 
 // AddPublisher adds a publisher to the worker pool
-func (c *Client) AddPublisher(ctx context.Context, pf WorkerFunc) error {
+func (c *Client) AddPublisher(unusedCtx context.Context, pf WorkerFunc) error {
 	if c.isConsumer {
-		panic("Adding a Publisher on a consumer Queue")
+		panic(errors.New("can not add publisher to consumer"))
 	}
 
-	newPublisherWid := atomic.AddUint64(&publisherWid, 1)
+	ensurePub := rabbitroutine.NewEnsurePublisher(c.pool)
+	pub := rabbitroutine.NewRetryPublisher(
+		ensurePub,
+		rabbitroutine.PublishMaxAttemptsSetup(16),
+		rabbitroutine.PublishDelaySetup(rabbitroutine.LinearDelay(10*time.Millisecond)),
+	)
+	go func() {
+		var exchange string
+		var routingKey string
+		if c.isExchange {
+			exchange = c.name
+		} else {
+			routingKey = c.name
+		}
+		for msg := range c.jobs {
+			d := pf(msg)
+			logMessage := logCorrelationID(c.log, d.CorrelationId)
+			logMessage.Info().Func(logDelivery(&msg, c.LogMessagesMaxSize)).Msg("publishing message")
+			err := pub.Publish(c.ctx, exchange, routingKey, *d)
+			if err != nil {
+				c.log.Error().Err(err).Msg("publish error")
+				if c.ctx.Err() != nil {
+					return
+				}
+			}
 
-	publisher := &worker{id: newPublisherWid, work: pf}
-
-	if len(c.workers) == 0 {
-		c.contestualizeReconnector(ctx)
-	}
-
-	c.workers = append(c.workers, *publisher)
-
-	logWorker := logWorkerID(c.log, publisher.id)
-	go c.sender(ctx, publisher, logWorker)
+			// We use ack normally used by customers to notify the broker. Here we use it to notify the code in an app,
+			// which send the message to the c.jobs queue. Why the hell? I have not idea :(
+			if msg.Acknowledger != nil {
+				err = msg.Ack(false)
+				if err != nil {
+					logMessage.Error().Err(err).Msg("Ack failed")
+				}
+			}
+		}
+	}()
 
 	return nil
-}
-
-// getChannel gets a channel from the Queue
-func (c *Client) getChannel() (ch *amqp.Channel, err error) {
-	return c.connection.Channel()
-}
-
-// setupConnection declares a Queue or Exchange connection
-func (c *Client) setupConnection() error {
-	if c.name == "" {
-		err := errors.New("no queue or exchange name provided")
-		log.Error().Err(err).Send()
-		return err
-	}
-
-	var err error
-	if c.isExchange {
-		err = c.channel.ExchangeDeclarePassive(c.name, "fanout", true, false, false, false, nil)
-	} else {
-		_, err = c.channel.QueueDeclarePassive(c.name, true, false, false, false, nil)
-	}
-
-	if err != nil {
-		c.log.Error().Err(err).Msg("declare passive")
-	}
-
-	return err
-}
-
-// setConsumerQoS sets QoS on a channel with a prefetch value
-func (c *Client) setConsumerQoS(prefetch int, global bool) error {
-	if c.channel != nil && c.name != "" {
-		return c.channel.Qos(
-			prefetch, // prefetch count
-			0,        // prefetch size
-			global,   // global
-		)
-	}
-	return nil
-}
-
-// publish sends a message on a channel if provided, otherwise get a new channel from the queue connection
-func (c *Client) publish(message *amqp.Publishing, ch *amqp.Channel) error {
-	if c.isConsumer {
-		return errors.New("publishing on a consumer queue")
-	}
-
-	if ch == nil {
-		var err error
-		ch, err = c.getChannel()
-		if err != nil {
-			return err
-		}
-	}
-
-	// If exchange is used to publish message
-	exchangeName := ""
-	queueName := c.name
-	if c.isExchange {
-		exchangeName = c.name
-		// Since we are using fanout exchange, routing key can be ignored
-		queueName = ""
-	}
-
-	// Publish the response
-	puberr := ch.Publish(
-		exchangeName, // exchange
-		queueName,    // routing key
-		false,        // mandatory
-		false,        // immediate
-		*message)
-
-	return puberr
-}
-
-// receiveJob returns a job from the .jobs queue, blocking if necessary. If
-// execution is canceled in any way it returns nil.
-func (c *Client) receiveJob(ctx context.Context) *amqp.Delivery {
-	select {
-	case <-ctx.Done():
-		return nil
-	case <-c.connectionErr:
-		return nil
-	case job, ok := <-c.jobs:
-		if !ok { // c.jobs was closed
-			return nil
-		}
-		return &job
-	}
-}
-
-func ReadCfgFromEnv() (*URL, error) {
-	url := &URL{}
-	if _, err := env.UnmarshalFromEnviron(url); err != nil {
-		return nil, err
-	}
-
-	return url, nil
 }

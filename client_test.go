@@ -144,7 +144,11 @@ func TestClientReconnect(t *testing.T) {
 	defer qi.Close()
 
 	rec := func(m amqp.Delivery) *amqp.Publishing {
-		assert.NoError(t, m.Ack(false))
+		err := m.Ack(false)
+		if err != nil {
+			t.Logf("Can not Ack(): %e", err)
+			return nil
+		}
 		atomic.AddUint64(&noReceived, 1)
 		return nil
 	}
