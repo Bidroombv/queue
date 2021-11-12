@@ -3,9 +3,6 @@ package queue
 import (
 	"context"
 	"fmt"
-	"github.com/docker/go-connections/nat"
-	"github.com/phayes/freeport"
-	"github.com/stretchr/testify/require"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -13,6 +10,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/docker/go-connections/nat"
+	"github.com/phayes/freeport"
+	"github.com/stretchr/testify/require"
 
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -379,7 +380,6 @@ func assertIsHealthy(t *testing.T, client *Client, expected bool) bool {
 func TestHealthCheck(t *testing.T) {
 	t.Parallel()
 	rabbitC, url := runRabbitContainer(t)
-	defer func() { require.NoError(t, rabbitC.Terminate(context.Background())) }()
 	const queueName = "queue"
 	const exchangeName = "exchange"
 	require.NoError(t, declareQueue(t, rabbitC, queueName))
@@ -388,12 +388,16 @@ func TestHealthCheck(t *testing.T) {
 
 	q, err := NewQueue(url, queueName, 1, true, false, nil)
 	assert.NoError(t, err)
-	defer q.Close()
 
 	jobOutChannel := make(chan amqp.Delivery)
 	ch, err := NewExchange(url, exchangeName, 1, true, jobOutChannel)
 	assert.NoError(t, err)
-	defer ch.Close()
+
+	defer func() {
+		require.NoError(t, rabbitC.Terminate(context.Background()))
+		q.Close()
+		ch.Close()
+	}()
 
 	t.Run("should be healthy after connection setup", func(t *testing.T) {
 		assertIsHealthy(t, q, true)
