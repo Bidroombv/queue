@@ -576,7 +576,7 @@ func TestClientReadyMessageCountWithConsume(t *testing.T) {
 		assert.NoError(t, e)
 		assert.Len(t, msgs, 1)
 		for _, m := range msgs {
-			m.Ack(false)
+			assert.NoError(t, m.Ack(false))
 		}
 	})
 }
