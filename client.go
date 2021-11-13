@@ -608,7 +608,13 @@ func ReadCfgFromEnv() (*URL, error) {
 
 // GetReadyMessagesCount checks number of messages in ready state in queue
 func (c *Client) GetReadyMessagesCount(queueName string) (msgCount int, err error) {
-	q, err := c.channel.QueueInspect(queueName)
+	ch, err := c.getChannel()
+	if err != nil {
+		log.Error().Err(err).Msg("c.getChannel()")
+		return 0, err
+	}
+
+	q, err := ch.QueueInspect(queueName)
 	if err != nil {
 		return
 	}
@@ -619,8 +625,14 @@ func (c *Client) GetReadyMessagesCount(queueName string) (msgCount int, err erro
 
 // ConsumeReadyMessages fetches given number of messages from queue
 func (c *Client) ConsumeReadyMessages(queueName string, numberOfMessages int) (msgs []amqp.Delivery, err error) {
+	ch, err := c.getChannel()
+	if err != nil {
+		log.Error().Err(err).Msg("c.getChannel()")
+		return nil, err
+	}
+
 	for i := 0; i < numberOfMessages; i++ {
-		d, ok, err := c.channel.Get(queueName, false)
+		d, ok, err := ch.Get(queueName, false)
 		if err != nil {
 			break
 		}

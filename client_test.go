@@ -535,3 +535,48 @@ func CheckNumMessages(t *testing.T, c testcontainers.Container, queueName string
 		}
 	}
 }
+
+func TestClientReadyMessageCountWithConsume(t *testing.T) {
+	t.Parallel()
+	rabbitC, url := runRabbitContainer(t)
+	defer func() { require.NoError(t, rabbitC.Terminate(context.Background())) }()
+
+	const queueName = "queue"
+	require.NoError(t, declareQueue(t, rabbitC, queueName))
+
+	correlationId := "abc"
+
+	jobChannel := make(chan amqp.Delivery)
+	q, err := NewQueue(url, queueName, 1, false, false, jobChannel)
+	assert.NoError(t, err)
+	defer q.Close()
+	pub := func(d amqp.Delivery) *amqp.Publishing {
+		return &amqp.Publishing{
+			ContentType:   d.ContentType,
+			CorrelationId: d.CorrelationId,
+			Body:          d.Body,
+			Type:          d.Type,
+			Headers:       d.Headers,
+		}
+	}
+	assert.NoError(t, q.AddPublisher(context.TODO(), pub))
+
+	t.Run("Check ready message count and consume", func(t *testing.T) {
+		jobChannel <- amqp.Delivery{
+			CorrelationId: correlationId,
+			Body:          []byte(`{"a": 4}`),
+			Type:          "some message type",
+			ContentType:   "application/json",
+		}
+		c, e := q.GetReadyMessagesCount(queueName)
+		assert.NoError(t, e)
+		assert.Equal(t, 1, c)
+
+		msgs, e := q.ConsumeReadyMessages(queueName, 1)
+		assert.NoError(t, e)
+		assert.Len(t, msgs, 1)
+		for _, m := range msgs {
+			m.Ack(false)
+		}
+	})
+}
