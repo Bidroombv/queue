@@ -184,7 +184,6 @@ func (c *Client) IsHealthy() bool {
 	return c.healthCheck.IsHealthy()
 }
 
-
 func (c *Client) connect() error {
 	c.log.Info().Msg("connecting")
 
@@ -605,4 +604,42 @@ func ReadCfgFromEnv() (*URL, error) {
 	}
 
 	return url, nil
+}
+
+// GetReadyMessagesCount checks number of messages in ready state in queue
+func (c *Client) GetReadyMessagesCount(queueName string) (msgCount int, err error) {
+	ch, err := c.getChannel()
+	if err != nil {
+		log.Error().Err(err).Msg("c.getChannel()")
+		return 0, err
+	}
+
+	q, err := ch.QueueInspect(queueName)
+	if err != nil {
+		return
+	}
+	msgCount = q.Messages
+
+	return
+}
+
+// ConsumeReadyMessages fetches given number of messages from queue
+func (c *Client) ConsumeReadyMessages(queueName string, numberOfMessages int) (msgs []amqp.Delivery, err error) {
+	ch, err := c.getChannel()
+	if err != nil {
+		log.Error().Err(err).Msg("c.getChannel()")
+		return nil, err
+	}
+
+	for i := 0; i < numberOfMessages; i++ {
+		d, ok, err := ch.Get(queueName, false)
+		if err != nil {
+			break
+		}
+		if ok {
+			msgs = append(msgs, d)
+		}
+	}
+
+	return
 }
