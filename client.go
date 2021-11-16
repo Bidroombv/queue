@@ -173,7 +173,6 @@ func (c *Client) Close() {
 	for _, w := range c.workers {
 		w.stop()
 	}
-	c.workers = nil
 	c.channel.Close()
 	c.connection.Close()
 }
