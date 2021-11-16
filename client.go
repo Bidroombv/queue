@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -205,10 +204,6 @@ func (c *Client) connect() error {
 		// In addition to the errors returned by ParseURI we may
 		// attempt to connect to a non-existent host
 		c.log.Error().Err(err).Msg("failed to dial")
-		if strings.Contains(err.Error(), ": no such host") {
-			return err
-		}
-
 		time.Sleep(500 * time.Millisecond)
 		conn, err = amqp.Dial(c.url)
 	}
