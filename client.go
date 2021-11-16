@@ -613,6 +613,7 @@ func (c *Client) GetReadyMessagesCount(queueName string) (msgCount int, err erro
 		log.Error().Err(err).Msg("c.getChannel()")
 		return 0, err
 	}
+	defer ch.Close()
 
 	q, err := ch.QueueInspect(queueName)
 	if err != nil {
@@ -630,6 +631,7 @@ func (c *Client) ConsumeReadyMessages(queueName string, numberOfMessages int) (m
 		log.Error().Err(err).Msg("c.getChannel()")
 		return nil, err
 	}
+	defer ch.Close()
 
 	for i := 0; i < numberOfMessages; i++ {
 		d, ok, err := ch.Get(queueName, false)
