@@ -546,6 +546,19 @@ func TestClientReadyMessageCountWithConsume(t *testing.T) {
 
 	correlationId := "abc"
 
+	received := make(chan bool, 1) // this channel gets "released" on message delivery
+	// Consumer
+	qi, err := NewQueue(url, queueName, 1, true, false, nil)
+	assert.NoError(t, err)
+	defer qi.Close()
+
+	rec := func(m amqp.Delivery) *amqp.Publishing {
+		assert.NoError(t, m.Ack(false))
+		received <- true
+		return nil
+	}
+
+	// Publisher
 	jobChannel := make(chan amqp.Delivery)
 	q, err := NewQueue(url, queueName, 1, false, false, jobChannel)
 	assert.NoError(t, err)
@@ -575,8 +588,8 @@ func TestClientReadyMessageCountWithConsume(t *testing.T) {
 		msgs, e := q.ConsumeReadyMessages(queueName, 1)
 		assert.NoError(t, e)
 		assert.Len(t, msgs, 1)
-		for _, m := range msgs {
-			assert.NoError(t, m.Ack(false))
-		}
+
+		assert.NoError(t, qi.AddReceiver(rec))
+		<-received // this guarantees message delivery
 	})
 }
