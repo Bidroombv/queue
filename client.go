@@ -619,7 +619,7 @@ func (c *Client) GetReadyMessagesCount(queueName string) (msgCount int, err erro
 }
 
 // GetReadyMessages fetches given number of messages from queue
-// Note : close() should be called once amqp.Delivery are processed
+// Note : close() should be called once all amqp.Delivery are processed
 func (c *Client) GetReadyMessages(queueName string, n int) (m []amqp.Delivery, close func() error, err error) {
 	ch, err := c.getChannel()
 	if err != nil {
