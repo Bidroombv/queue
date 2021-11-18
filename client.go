@@ -619,14 +619,14 @@ func (c *Client) GetReadyMessagesCount(queueName string) (msgCount int, err erro
 }
 
 // GetReadyMessages fetches given number of messages from queue
-func (c *Client) GetReadyMessages(queueName string, n int) (m []amqp.Delivery, err error) {
+func (c *Client) GetReadyMessages(queueName string, n int) (msgs []amqp.Delivery, err error) {
 	for i := 0; i < n; i++ {
 		d, ok, err := c.channel.Get(queueName, false)
 		if err != nil {
 			break
 		}
 		if ok {
-			m = append(m, d)
+			msgs = append(msgs, d)
 		}
 	}
 
