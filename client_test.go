@@ -536,7 +536,7 @@ func CheckNumMessages(t *testing.T, c testcontainers.Container, queueName string
 	}
 }
 
-func TestClientGetReadyMessageCountAndConsume(t *testing.T) {
+func TestClientGetReadyMessageCountAndMessages(t *testing.T) {
 	t.Parallel()
 	rabbitC, url := runRabbitContainer(t)
 	defer func() { require.NoError(t, rabbitC.Terminate(context.Background())) }()
@@ -574,7 +574,7 @@ func TestClientGetReadyMessageCountAndConsume(t *testing.T) {
 	}
 	assert.NoError(t, q.AddPublisher(context.TODO(), pub))
 
-	t.Run("Check ready message count and consume", func(t *testing.T) {
+	t.Run("Check ready message count and get messages", func(t *testing.T) {
 		jobChannel <- amqp.Delivery{
 			CorrelationId: correlationId,
 			Body:          []byte(`{"a": 4}`),
