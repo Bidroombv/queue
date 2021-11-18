@@ -588,7 +588,7 @@ func TestClientGetReadyMessageCountAndConsume(t *testing.T) {
 		msgs, close, e := q.GetReadyMessages(queueName, 1)
 		assert.NoError(t, e)
 		assert.Len(t, msgs, 1)
-		defer close()
+		assert.NoError(t, close())
 
 		assert.NoError(t, qi.AddReceiver(rec))
 		jobChannel <- amqp.Delivery{
