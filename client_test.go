@@ -585,9 +585,10 @@ func TestClientGetReadyMessageCountAndMessages(t *testing.T) {
 		assert.NoError(t, e)
 		assert.Equal(t, 1, c)
 
-		msgs, e := q.GetReadyMessages(queueName, 1)
+		msgs, close, e := q.GetReadyMessages(queueName, 1)
 		assert.NoError(t, e)
 		assert.Len(t, msgs, 1)
+		assert.NoError(t, close())
 
 		assert.NoError(t, qi.AddReceiver(rec))
 		jobChannel <- amqp.Delivery{
