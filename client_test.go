@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"fmt"
+	"github.com/rs/zerolog"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -21,6 +22,10 @@ import (
 	"github.com/streadway/amqp"
 	"github.com/stretchr/testify/assert"
 )
+
+func init() {
+	zerolog.SetGlobalLevel(zerolog.WarnLevel)
+}
 
 func TestClientStop(t *testing.T) {
 	t.Parallel()
@@ -148,7 +153,10 @@ func TestClientReconnect(t *testing.T) {
 	defer qi.Close()
 
 	rec := func(m amqp.Delivery) *amqp.Publishing {
-		assert.NoError(t, m.Ack(false))
+		if err := m.Ack(false); err != nil {
+			t.Logf("ACK failed, probably broker is down. Not increasing the number of received messages, because it will be received again (it should be): %e", err)
+			return nil
+		}
 		atomic.AddUint64(&noReceived, 1)
 		return nil
 	}
