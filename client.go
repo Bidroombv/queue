@@ -601,7 +601,7 @@ func ReadCfgFromEnv() (*URL, error) {
 }
 
 // GetReadyMessagesCount checks number of messages in ready state in queue
-func (c *Client) GetReadyMessagesCount(queueName string) (msgCount int, err error) {
+func (c *Client) GetReadyMessagesCount() (msgCount int, err error) {
 	ch, err := c.getChannel()
 	if err != nil {
 		log.Error().Err(err).Msg("c.getChannel()")
@@ -609,7 +609,7 @@ func (c *Client) GetReadyMessagesCount(queueName string) (msgCount int, err erro
 	}
 	defer ch.Close()
 
-	q, err := ch.QueueInspect(queueName)
+	q, err := ch.QueueInspect(c.name)
 	if err != nil {
 		return
 	}
@@ -618,22 +618,23 @@ func (c *Client) GetReadyMessagesCount(queueName string) (msgCount int, err erro
 	return
 }
 
-// ConsumeReadyMessages fetches given number of messages from queue
-func (c *Client) ConsumeReadyMessages(queueName string, numberOfMessages int) (msgs []amqp.Delivery, err error) {
+// GetReadyMessages fetches at most given number of messages from queue
+// Note : close() should be called once all amqp.Delivery are processed
+func (c *Client) GetReadyMessages(n int) (m []amqp.Delivery, close func() error, err error) {
 	ch, err := c.getChannel()
 	if err != nil {
 		log.Error().Err(err).Msg("c.getChannel()")
-		return nil, err
+		return nil, ch.Close, err
 	}
-	defer ch.Close()
+	close = ch.Close
 
-	for i := 0; i < numberOfMessages; i++ {
-		d, ok, err := ch.Get(queueName, false)
+	for i := 0; i < n; i++ {
+		d, ok, err := ch.Get(c.name, false)
 		if err != nil {
 			break
 		}
 		if ok {
-			msgs = append(msgs, d)
+			m = append(m, d)
 		}
 	}
 
