@@ -3,8 +3,9 @@ package queue
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"github.com/pkg/errors"
+	"github.com/rs/zerolog/pkgerrors"
 	"sync/atomic"
 	"time"
 
@@ -320,9 +321,22 @@ func (c *Client) receiver(w *worker, log *zerolog.Logger) error {
 	// listen on the Delivery channel and distribute jobs to workers
 	go func() {
 		for m := range msgs {
-			logMessage := logCorrelationID(log, m.CorrelationId)
-			logMessage.Info().Func(logDelivery(&m)).Msg("consuming job")
-			w.work(m)
+			func() {
+				logMessage := logCorrelationID(log, m.CorrelationId)
+				logMessage.Info().Func(logDelivery(&m)).Msg("consuming job")
+
+				defer func() {
+					if r := recover(); r != nil {
+						stack := pkgerrors.MarshalStack(errors.New(""))
+						logMessage.Error().Func(logDelivery(&m)).Interface(zerolog.ErrorStackFieldName, stack).Err(fmt.Errorf("%v", r)).Msg("panic, moving message to dlq")
+						if err := m.Reject(false); err != nil {
+							logMessage.Error().Err(err).Msg("cannot reject message after panic")
+						}
+					}
+				}()
+
+				w.work(m)
+			}()
 		}
 	}()
 

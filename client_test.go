@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/go-connections/nat"
 	"github.com/phayes/freeport"
 	"github.com/stretchr/testify/require"
 
@@ -312,6 +311,85 @@ func TestClientFast(t *testing.T) {
 	CheckNumMessages(t, rabbitC, queueName, 0)
 }
 
+func TestPanicHandlingInConsumer(t *testing.T) {
+	t.Parallel()
+	rabbitC, url := runRabbitContainer(t)
+	defer func() { require.NoError(t, rabbitC.Terminate(context.Background())) }()
+
+	const dlqQueueName = "queue-dlq"
+	const dlqExchangeName = "exchange-dlq"
+	const queueName = "queue"
+	require.NoError(t, declareQueue(t, rabbitC, dlqQueueName))
+	require.NoError(t, declareExchange(t, rabbitC, dlqExchangeName, "fanout"))
+	require.NoError(t, declareBinding(t, rabbitC, dlqExchangeName, dlqQueueName))
+	require.NoError(t, declareQueueWithDlq(t, rabbitC, queueName, dlqExchangeName))
+
+	num := 10
+	received := make(chan bool, num) // this channel gets "released" on message delivery
+	// Consumer
+	qi, err := NewQueue(url, queueName, 1, true, false, nil)
+	require.NoError(t, err)
+	defer qi.Close()
+
+	const numberForWhichPublisherPanic = 4
+	rec := func(m amqp.Delivery) *amqp.Publishing {
+		if m.CorrelationId == strconv.Itoa(numberForWhichPublisherPanic) {
+			panic("panicking !!!!!")
+		}
+
+		assert.NoError(t, m.Ack(false))
+		received <- true
+		return nil
+	}
+	assert.NoError(t, qi.AddReceiver(rec))
+
+	// Publisher
+	jobOutChannel := make(chan amqp.Delivery)
+	qo, err := NewQueue(url, queueName, 1, false, false, jobOutChannel)
+	assert.NoError(t, err)
+	defer qo.Close()
+	pub := func(d amqp.Delivery) *amqp.Publishing {
+		return &amqp.Publishing{
+			ContentType:   d.ContentType,
+			CorrelationId: d.CorrelationId,
+			Body:          d.Body,
+			Headers:       d.Headers,
+		}
+	}
+	assert.NoError(t, qo.AddPublisher(context.TODO(), pub))
+
+	var wg sync.WaitGroup
+	wg.Add(num)
+	for i := 0; i < num; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			jobOutChannel <- amqp.Delivery{CorrelationId: strconv.Itoa(i)}
+
+			if i != numberForWhichPublisherPanic {
+				<-received
+			}
+		}()
+	}
+	wg.Wait()
+
+	CheckNumMessages(t, rabbitC, queueName, 0)
+	CheckNumMessages(t, rabbitC, dlqQueueName, 1)
+
+	t.Run("check rejected message", func(t *testing.T) {
+		dlq, err := NewQueue(url, dlqQueueName, 1, false, false, nil)
+		require.NoError(t, err)
+		defer dlq.Close()
+
+		m, close, err := dlq.GetReadyMessages(1)
+		require.NoError(t, err)
+		defer func() { _ = close() }()
+
+		require.Len(t, m, 1)
+		assert.Equal(t, strconv.Itoa(numberForWhichPublisherPanic), m[0].CorrelationId)
+	})
+}
+
 // Send many messages in parallel with Exchange
 func TestClientFastWithExchange(t *testing.T) {
 	t.Parallel()
@@ -434,10 +512,11 @@ func TestHealthCheck(t *testing.T) {
 }
 
 const (
-	user     = "user"
-	password = "password"
-	vhost    = "/"
-	port     = "5672/tcp"
+	user           = "user"
+	password       = "password"
+	vhost          = "/"
+	port           = "5672/tcp"
+	managementPort = "15672/tcp"
 )
 
 func runInContainer(t *testing.T, c testcontainers.Container, cmd string) (string, error) {
@@ -449,12 +528,20 @@ func runInContainer(t *testing.T, c testcontainers.Container, cmd string) (strin
 
 func runRabbitMqAdmin(t *testing.T, c testcontainers.Container, cmd string) (string, error) {
 	t.Helper()
-	return runInContainer(t, c, fmt.Sprintf(`rabbitmqadmin -u "%s" -p "%s" %s`, user, password, cmd))
+	fullCmd := fmt.Sprintf(`rabbitmqadmin -u "%s" -p "%s" %s`, user, password, cmd)
+	t.Logf(fullCmd)
+	return runInContainer(t, c, fullCmd)
 }
 
 func declareQueue(t *testing.T, c testcontainers.Container, name string) error {
 	t.Helper()
 	_, err := runRabbitMqAdmin(t, c, fmt.Sprintf(`declare queue name="%s"`, name))
+	return err
+}
+
+func declareQueueWithDlq(t *testing.T, c testcontainers.Container, name, dlq string) error {
+	t.Helper()
+	_, err := runRabbitMqAdmin(t, c, fmt.Sprintf(`declare queue name="%s" arguments='{"x-dead-letter-exchange":"%s"}'`, name, dlq))
 	return err
 }
 
@@ -483,13 +570,13 @@ func runRabbitContainer(t *testing.T) (testcontainers.Container, *URL) {
 		Started: true,
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:        "rabbitmq:3-management",
-			ExposedPorts: []string{fmt.Sprintf("%d:%s", freePort, port)},
+			ExposedPorts: []string{fmt.Sprintf("%d:%s", freePort, port), managementPort},
 			Env: map[string]string{
 				"RABBITMQ_DEFAULT_USER":  user,
 				"RABBITMQ_DEFAULT_PASS":  password,
 				"RABBITMQ_DEFAULT_VHOST": vhost,
 			},
-			WaitingFor: wait.ForListeningPort(nat.Port(port)),
+			WaitingFor: wait.ForListeningPort(port),
 		},
 	})
 	require.NoError(t, err)
@@ -500,7 +587,7 @@ func runRabbitContainer(t *testing.T) (testcontainers.Container, *URL) {
 		require.NoError(t, err)
 	}
 
-	mappedPort, err := c.MappedPort(context.Background(), nat.Port(port))
+	mappedPort, err := c.MappedPort(context.Background(), port)
 	if err != nil {
 		_ = c.Terminate(context.Background())
 		require.NoError(t, err)
