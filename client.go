@@ -439,6 +439,10 @@ MAIN:
 
 			publishing := w.work(*m)
 
+			if publishing.Timestamp.IsZero() {
+				publishing.Timestamp = time.Now()
+			}
+
 			// There are multiple possible failure scenarios that
 			// result in either message Duplication or Loss.
 			if err := c.publish(publishing, w.channel); err != nil {
