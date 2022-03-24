@@ -76,6 +76,9 @@ func (w *worker) stop() {
 
 // Client is a wrapper around *amqp.Connection which allow interaction with one queue/exchange.
 type Client struct {
+	// ConsumerAdditionalLog can be used to extend the consumed message log
+	ConsumerAdditionalLog func(e *zerolog.Event, d *amqp.Delivery)
+
 	// Name of the queue/exchange
 	name string
 	// complete URL of the queue (i.e "amqp://guest:guest@localhost:5672/")
@@ -118,15 +121,16 @@ func NewExchange(url *URL, name string, prefetchSize int, durable bool, jobs cha
 
 func newClient(url *URL, name string, prefetchSize int, isConsumer, isExchange, durable bool, jobs chan amqp.Delivery) (*Client, error) {
 	c := &Client{
-		name:         name,
-		url:          url.urlString(),
-		isConsumer:   isConsumer,
-		isExchange:   isExchange,
-		Durable:      durable,
-		Jobs:         jobs,
-		log:          setupLogger(*url, isExchange, isConsumer, name),
-		prefetchSize: prefetchSize,
-		workers:      make([]worker, 0),
+		ConsumerAdditionalLog: func(e *zerolog.Event, d *amqp.Delivery) {},
+		name:                  name,
+		url:                   url.urlString(),
+		isConsumer:            isConsumer,
+		isExchange:            isExchange,
+		Durable:               durable,
+		Jobs:                  jobs,
+		log:                   setupLogger(*url, isExchange, isConsumer, name),
+		prefetchSize:          prefetchSize,
+		workers:               make([]worker, 0),
 	}
 
 	if err := c.connect(); err != nil {
@@ -323,12 +327,12 @@ func (c *Client) receiver(w *worker, log *zerolog.Logger) error {
 		for m := range msgs {
 			func() {
 				logMessage := logCorrelationID(log, m.CorrelationId)
-				logMessage.Info().Func(logDelivery(&m)).Msg("consuming job")
+				logMessage.Info().Func(c.logDelivery(&m)).Msg("consuming job")
 
 				defer func() {
 					if r := recover(); r != nil {
 						stack := pkgerrors.MarshalStack(errors.New(""))
-						logMessage.Error().Func(logDelivery(&m)).Interface(zerolog.ErrorStackFieldName, stack).Err(fmt.Errorf("%v", r)).Msg("panic, moving message to dlq")
+						logMessage.Error().Func(c.logDelivery(&m)).Interface(zerolog.ErrorStackFieldName, stack).Err(fmt.Errorf("%v", r)).Msg("panic, moving message to dlq")
 						if err := m.Reject(false); err != nil {
 							logMessage.Error().Err(err).Msg("cannot reject message after panic")
 						}
@@ -348,9 +352,49 @@ func logCorrelationID(log *zerolog.Logger, correlationID string) *zerolog.Logger
 	return &l
 }
 
-func logDelivery(m *amqp.Delivery) func(*zerolog.Event) {
+func logDeath(e *zerolog.Event, m *amqp.Delivery) {
+	death, ok := m.Headers["x-death"]
+	if !ok {
+		return
+	}
+
+	items, ok := death.([]interface{})
+	if !ok {
+		return
+	}
+
+	if len(items) != 1 {
+		return
+	}
+	t, ok := items[0].(amqp.Table)
+	if !ok {
+		return
+	}
+
+	count, ok := t["count"]
+	if !ok {
+		return
+	}
+
+	time, ok := t["time"]
+	if !ok {
+		return
+	}
+
+	e.Dict("death", zerolog.Dict().Interface("count", count).Interface("time", time))
+}
+
+func (c *Client) logDelivery(m *amqp.Delivery) func(*zerolog.Event) {
 	return func(e *zerolog.Event) {
+		if c.isConsumer {
+			c.ConsumerAdditionalLog(e, m)
+		}
+
 		e = e.Str("contentType", m.ContentType).Str("type", m.Type).Int("bodySize", len(m.Body))
+		if m.Redelivered {
+			e.Bool("redelivered", true)
+		}
+		logDeath(e, m)
 
 		if m.ContentType == "application/json" {
 			var asJSON interface{}
@@ -391,7 +435,7 @@ MAIN:
 			}
 
 			logMessage := logCorrelationID(log, m.CorrelationId)
-			logMessage.Info().Func(logDelivery(m)).Msg("publishing message")
+			logMessage.Info().Func(c.logDelivery(m)).Msg("publishing message")
 
 			publishing := w.work(*m)
 
