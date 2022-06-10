@@ -289,6 +289,38 @@ func (c *Client) reconnectWorkers(ctx context.Context) {
 	}
 }
 
+type acknowledgerWrapper struct {
+	wrapped   amqp.Acknowledger
+	logFields map[string]any
+}
+
+const acknowledgementLogKey = "acknowledgement"
+const requeueLogKey = "requeued"
+
+func (a *acknowledgerWrapper) Ack(tag uint64, multiple bool) error {
+	err := a.wrapped.Ack(tag, multiple)
+	if err == nil {
+		a.logFields = map[string]any{acknowledgementLogKey: "ack"}
+	}
+	return err
+}
+
+func (a *acknowledgerWrapper) Nack(tag uint64, multiple bool, requeue bool) error {
+	err := a.wrapped.Nack(tag, multiple, requeue)
+	if err == nil {
+		a.logFields = map[string]any{acknowledgementLogKey: "nack", requeueLogKey: requeue}
+	}
+	return err
+}
+
+func (a *acknowledgerWrapper) Reject(tag uint64, requeue bool) error {
+	err := a.wrapped.Reject(tag, requeue)
+	if err == nil {
+		a.logFields = map[string]any{acknowledgementLogKey: "reject", requeueLogKey: requeue}
+	}
+	return err
+}
+
 func (c *Client) receiver(w *worker, log *zerolog.Logger) error {
 	ch, err := c.getChannel()
 	if err != nil {
@@ -326,6 +358,7 @@ func (c *Client) receiver(w *worker, log *zerolog.Logger) error {
 	go func() {
 		for m := range msgs {
 			func() {
+				startTime := time.Now()
 				logMessage := logCorrelationID(log, m.CorrelationId)
 				logMessage.Info().Func(c.logDelivery(&m)).Msg("consuming job")
 
@@ -338,8 +371,13 @@ func (c *Client) receiver(w *worker, log *zerolog.Logger) error {
 						}
 					}
 				}()
-
+				ackWrapper := &acknowledgerWrapper{wrapped: m.Acknowledger}
+				m.Acknowledger = ackWrapper
 				w.work(m)
+				logMessage.Info().
+					Dur("duration_ms", time.Since(startTime)).
+					Fields(ackWrapper.logFields).
+					Msg("job consumed")
 			}()
 		}
 	}()
