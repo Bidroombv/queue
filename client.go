@@ -360,7 +360,7 @@ func (c *Client) receiver(w *worker, log *zerolog.Logger) error {
 			func() {
 				startTime := time.Now()
 				logMessage := logCorrelationID(log, m.CorrelationId)
-				logMessage.Info().Func(c.logDelivery(&m)).Msg("consuming job")
+				logMessage.Debug().Func(c.logDelivery(&m)).Msg("consuming job")
 
 				defer func() {
 					if r := recover(); r != nil {
