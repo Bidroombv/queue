@@ -4,8 +4,8 @@ go 1.18
 
 require (
 	github.com/Netflix/go-env v0.0.0-20210215222557-e437a7e7f9fb
-	github.com/docker/go-connections v0.4.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
+	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.25.0
 	github.com/streadway/amqp v1.0.0
 	github.com/stretchr/testify v1.7.0
@@ -22,6 +22,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/docker/distribution v2.7.1+incompatible // indirect
 	github.com/docker/docker v20.10.7+incompatible // indirect
+	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/docker/go-units v0.4.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/groupcache v0.0.0-20200121045136-8c9f03a8e57e // indirect
@@ -34,12 +35,11 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.0.1 // indirect
 	github.com/opencontainers/runc v1.0.0-rc93 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/sirupsen/logrus v1.7.0 // indirect
 	go.opencensus.io v0.22.3 // indirect
 	golang.org/x/net v0.0.0-20210405180319-a5a99cb37ef4 // indirect
-	golang.org/x/sys v0.0.0-20210510120138-977fb7262007 // indirect
+	golang.org/x/sys v0.1.0 // indirect
 	google.golang.org/genproto v0.0.0-20201110150050-8816d57aaa9a // indirect
 	google.golang.org/grpc v1.33.2 // indirect
 	google.golang.org/protobuf v1.25.0 // indirect
